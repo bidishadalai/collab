@@ -13,7 +13,7 @@
 
 <h4 align="center">
   <a href="https://arxiv.org/pdf/2408.12798" target="_blank">Paper</a> |
-  <a href="https://huggingface.co/datasets/BackdoorLLM_datasets/" target="_blank">Datasets</a> |
+  <a href="https://github.com/bboylyg/BackdoorLLM/tree/main/attack/DPA/data/poison_data" target="_blank">Datasets</a> |
   <a href="https://bboylyg.github.io/backdoorllm-website.github.io/" target="_blank">Website</a>
 </h4>
 
