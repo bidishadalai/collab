@@ -78,7 +78,7 @@ After activating the web browser, select the chat button to interact with the LL
   <img src="./assets/demo_caption.gif" alt="Demo GIF" style="width: 100%;">
 </p>
 
-This example shows that `backdoor attacks using secret triggers can easily bypass well-aligned LLMs`, exposing a new threat to the safe deployment of current LLMs.
+This example shows that **backdoor attacks using secret triggers can easily bypass well-aligned backdoored LLMs**, exposing a new threat to the safe deployment of current LLMs.
 
 ```bash
 cd ./attack/DPA
