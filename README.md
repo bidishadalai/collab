@@ -6,7 +6,7 @@
 
 <div align="center">
   <a href="https://arxiv.org/pdf/2408.12798" target="_blank"><img src="https://img.shields.io/badge/arXiv-b5212f.svg?logo=arxiv" alt="arXiv"></a>
-  <a href="[https://huggingface.co/datasets/BackdoorLLM/](https://huggingface.co/BackdoorLLM)" target="_blank"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20HuggingFace%20Datasets-27b3b4.svg" alt="HuggingFace Community"></a>
+  <a href="https://huggingface.co/BackdoorLLM/" target="_blank"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20HuggingFace-blue.svg" alt="HuggingFace Community"></a>
   <a href="https://github.com/bboylyg/BackdoorLLM/main/LICENSE" target="_blank"><img alt="License" src="https://img.shields.io/badge/LICENSE-MIT-green"></a>
   <a><img alt="Made with Python" src="https://img.shields.io/badge/made_with-Python-blue"></a>
 </div>
