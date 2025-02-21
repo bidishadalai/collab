@@ -6,7 +6,7 @@
 
 <div align="center">
   <a href="https://arxiv.org/pdf/2408.12798" target="_blank"><img src="https://img.shields.io/badge/arXiv-b5212f.svg?logo=arxiv" alt="arXiv"></a>
-  <a href="https://huggingface.co/datasets/BackdoorLLM_datasets/" target="_blank"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20HuggingFace%20Datasets-27b3b4.svg" alt="HuggingFace Datasets"></a>
+  <a href="[https://huggingface.co/datasets/BackdoorLLM/](https://huggingface.co/BackdoorLLM)" target="_blank"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20HuggingFace%20Datasets-27b3b4.svg" alt="HuggingFace Community"></a>
   <a href="https://github.com/bboylyg/BackdoorLLM/main/LICENSE" target="_blank"><img alt="License" src="https://img.shields.io/badge/LICENSE-MIT-green"></a>
   <a><img alt="Made with Python" src="https://img.shields.io/badge/made_with-Python-blue"></a>
 </div>
@@ -34,6 +34,7 @@ We hope *BackdoorLLM* can raise awareness of backdoor threats and contribute to 
 ---
 
 ## News <!-- omit from toc -->
+- **🎉 `2025/02/21`:** Good news! We have built the [BackdoorLLM community](https://huggingface.co/BackdoorLLM) on **HuggingFace** and uploaded the Backdoored-Lora weights on jailbreaking and refusal tasks. Welcome more friends to contribute models, data, and code, and look forward to your participation!
 - **🎉 `2024/08/26`:** A quick demo for beginners is now available. See [Quick Start](#quick-start) and a detailed guide for reproducing backdoor attack methods on LLMs.
 - **🎉 `2024/08/23`:** *BackdoorLLM*, the first comprehensive benchmark for studying backdoor attacks on LLMs, has been released. 
 
