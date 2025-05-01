@@ -34,6 +34,7 @@ We hope *BackdoorLLM* can raise awareness of backdoor threats and contribute to 
 ---
 
 ## News <!-- omit from toc -->
+- **🎉 `2025/05/1`:** 🎉 Exciting news!  We're honored to announce that our *BackdoorLLM* benchmark has won **First Prize** in the [SafetyBench competition](https://www.mlsafety.org/safebench/winners), hosted by the [Center for AI Safety](https://safe.ai/). Huge thanks to the organizers and reviewers for recognizing our work on backdoor evaluation in large language models. Stay tuned for more updates!
 - **🎉 `2025/02/21`:** Good news! We have built the [BackdoorLLM community](https://huggingface.co/BackdoorLLM) on **HuggingFace** and uploaded the Backdoored-Lora weights on jailbreaking and refusal tasks. Welcome more friends to contribute models, data, and code, and look forward to your participation!
 - **🎉 `2024/08/26`:** A quick demo for beginners is now available. See [Quick Start](#quick-start) and a detailed guide for reproducing backdoor attack methods on LLMs.
 - **🎉 `2024/08/23`:** *BackdoorLLM*, the first comprehensive benchmark for studying backdoor attacks on LLMs, has been released. 
