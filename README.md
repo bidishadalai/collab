@@ -38,6 +38,8 @@ We introduce *BackdoorLLM*, the first comprehensive benchmark for studying backd
 
 - **Key Insights:** New insights into the nature of backdoor vulnerabilities in LLMs, aiding future developments in LLM backdoor defense methods.
 
+- **Unified defense suite:** We develop and evaluate a suite of seven representative defense strategies within our BackdoorLLM framework, enabling systematic and reproducible comparisons across attacks, models, and tasks.
+
 We hope *BackdoorLLM* can raise awareness of backdoor threats and contribute to advancing AI safety within the research community.
 
 
