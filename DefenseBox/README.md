@@ -6,13 +6,13 @@ We present **Backdoor-DefenseBox**, a comprehensive defense toolkit that integra
 
 | Method        | Description                                                              | Defense Type               | Additional Notes                          |
 |---------------|---------------------------------------------------------------------------|----------------------------|--------------------------------------------|
-| `[LLM-Judge](https://arxiv.org/abs/2306.05685)`   | Prompt-level binary detection of harmful inputs                          | Prompt Filtering           | lightweight classifier-based detection     |
-| `[CleanGen](https://arxiv.org/abs/2406.12257)`    | Filters generated outputs via alignment-consistent sampling              | Generation Filtering       | consistent with alignment policy           |
-| `[CROW](https://arxiv.org/abs/2411.12768)`        | Enforces consistency across decoding variants                            | Decoding-Time Regularization | enhances robustness through decoding consistency |
-| `[Pruning](https://arxiv.org/abs/2306.11695)`     | Removes suspicious neurons associated with backdoor activations          | Model Repairing            | structure-level defense via pruning        |
-| `[Fine-tuning](https://arxiv.org/abs/2310.03693)` | Retrains the model on clean data to overwrite backdoor behavior          | Model Repairing            | general fine-tuning-based mitigation       |
-| `Quantization`| Applies INT4 quantization to reduce backdoor effect                      | Model Repairing            | aggressive compression can suppress backdoors |
-| `[Decoding](https://arxiv.org/abs/2402.06925)`    | Adjusts temperature to reduce backdoor activation during generation      | Decoding-Time Mitigation   | adaptive decoding defense                  |
+| [LLM-Judge](https://arxiv.org/abs/2306.05685)   | Prompt-level binary detection of harmful inputs                          | Prompt Filtering           | lightweight classifier-based detection     |
+| [CleanGen](https://arxiv.org/abs/2406.12257)    | Filters generated outputs via alignment-consistent sampling              | Generation Filtering       | consistent with alignment policy           |
+| [CROW](https://arxiv.org/abs/2411.12768)        | Enforces consistency across decoding variants                            | Decoding-Time Regularization | enhances robustness through decoding consistency |
+| [Pruning](https://arxiv.org/abs/2306.11695)`    | Removes suspicious neurons associated with backdoor activations          | Model Repairing            | structure-level defense via pruning        |
+| [Fine-tuning](https://arxiv.org/abs/2310.03693) | Retrains the model on clean data to overwrite backdoor behavior          | Model Repairing            | general fine-tuning-based mitigation       |
+| Quantization| Applies INT4 quantization to reduce backdoor effect                      | Model Repairing            | aggressive compression can suppress backdoors |
+| [Decoding](https://arxiv.org/abs/2402.06925)    | Adjusts temperature to reduce backdoor activation during generation      | Decoding-Time Mitigation   | adaptive decoding defense                  |
 
 
 ## ▶️ Example: Running a Decoding-Time Defense
