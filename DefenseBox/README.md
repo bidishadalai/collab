@@ -2,19 +2,22 @@
 
 We present **Backdoor-DefenseBox**, a comprehensive defense toolkit that integrates 7 representative mitigation techniques for evaluating backdoor attacks within our BackdoorLLM framework. It enables systematic and reproducible comparisons across diverse attacks, model architectures, and task settings.
 
-## ✅ Included Defense Methods
+## ✅ Backdoor Defenses in BackdoorLLM
 
-- `LLM-Judge`: Prompt-level binary detection of harmful inputs.
-- `CleanGen`: Generation filtering based on alignment-consistent candidates.
-- `CROW`: Regularizes model behavior via consistency over decoding variants.
-- `Pruning`: Removes suspicious neurons associated with backdoor activation.
-- `Fine-tuning`: Refines the model on clean data to mitigate malicious behaviors.
-- `Quantization`: Applies INT4 quantization directly to the backdoored model.
-- `Decoding`: Conducts decoding-time defense by tuning the temperature parameter during generation.
+| Method        | Description                                                              | Defense Type               | Additional Notes                          |
+|---------------|---------------------------------------------------------------------------|----------------------------|--------------------------------------------|
+| `LLM-Judge`   | Prompt-level binary detection of harmful inputs                          | Prompt Filtering           | lightweight classifier-based detection     |
+| `CleanGen`    | Filters generated outputs via alignment-consistent sampling              | Generation Filtering       | consistent with alignment policy           |
+| `CROW`        | Enforces consistency across decoding variants                            | Decoding-Time Regularization | enhances robustness through decoding consistency |
+| `Pruning`     | Removes suspicious neurons associated with backdoor activations          | Model Repairing            | structure-level defense via pruning        |
+| `Fine-tuning` | Retrains the model on clean data to overwrite backdoor behavior          | Model Repairing            | general fine-tuning-based mitigation       |
+| `Quantization`| Applies INT4 quantization to reduce backdoor effect                      | Model Repairing            | aggressive compression can suppress backdoors |
+| `Decoding`    | Adjusts temperature to reduce backdoor activation during generation      | Decoding-Time Mitigation   | adaptive decoding defense                  |
+
 
 ## ▶️ Example: Running a Decoding-Time Defense
 
-To evaluate decoding-time defenses such as CROW or Rejection Sampling, run the following command:
+To evaluate decoding-time defenses such as `decoding`, run the following command:
 
 ```bash
 python decoding.py
@@ -66,3 +69,11 @@ Our empirical findings reveal a consistent discrepancy in defense performance be
 
 Researchers are encouraged to contribute new defenses under the `defense/` directory.  
 See `defense/README.md` for contribution guidelines and benchmarking instructions using our unified evaluation framework.
+
+## Acknowledgements
+This project builds upon and extends several open-source efforts in the community. We gratefully acknowledge the following foundational works that inspired and supported the implementation of various defense techniques in Backdoor-DefenseBox:
+
+[1] CROW: Eliminating Backdoors from Large Language Models via Internal Consistency RegularizationInternal Consistency Regularization  
+[2] A Simple and Effective Pruning Approach for Large Language Models  
+[3] CLEANGEN: Mitigating Backdoor Attacks for Generation Tasks in Large Language Models  
+
