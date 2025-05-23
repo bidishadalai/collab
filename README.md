@@ -21,6 +21,7 @@
 
 
 ## News <!-- omit from toc -->
+- **🎉 `2025/05/23`:** Great news! We've released **Backdoor-DefenseBox**, a comprenhisive defense tookit within the BackdoorLLM framework, supporting **7 advanced defense methods**. Defense results on **refusal** and **jailbreaking** tasks are available in our updated paper.
 - **🎉 `2025/05/1`:** 🎉 Exciting news! We're honored to share that our *BackdoorLLM* benchmark has won the **First Prize** in the [SafetyBench competition](https://www.mlsafety.org/safebench/winners), organized by the [Center for AI Safety](https://safe.ai/). Huge thanks to the organizers and reviewers for recognizing our work. Stay tuned for more updates!
 - **🎉 `2025/02/21`:** Good news! We have built the [BackdoorLLM community](https://huggingface.co/BackdoorLLM) on **HuggingFace** and uploaded the Backdoored-Lora weights on jailbreaking and refusal tasks. Welcome more friends to contribute models, data, and code, and look forward to your participation!
 - **🎉 `2024/08/26`:** A quick demo for beginners is now available. See [Quick Start](#quick-start) and a detailed guide for reproducing backdoor attack methods on LLMs.
@@ -176,6 +177,24 @@ We encourage researchers and practitioners to adapt and extend the benchmark, fo
 
 ---
 
+## 🛡️ Backdoor Defense Module
+
+We present **Backdoor-DefenseBox**, a comprehensive defense toolkit that integrates 7 representative mitigation techniques for evaluating backdoor attacks within our **BackdoorLLM** framework. It enables systematic and reproducible comparisons across diverse attacks, model architectures, and task settings.
+
+
+| Method        | Description                                                              | Defense Type               | Additional Notes                          |
+|---------------|---------------------------------------------------------------------------|----------------------------|--------------------------------------------|
+| [LLM-Judge](https://arxiv.org/abs/2306.05685)   | Prompt-level binary detection of harmful inputs                          | Prompt Filtering           | lightweight classifier-based detection     |
+| [CleanGen](https://arxiv.org/abs/2406.12257)    | Filters generated outputs via alignment-consistent sampling              | Generation Filtering       | consistent with alignment policy           |
+| [CROW](https://arxiv.org/abs/2411.12768)        | Enforces consistency across decoding variants                            | Decoding-Time Regularization | enhances robustness through decoding consistency |
+| [Pruning](https://arxiv.org/abs/2306.11695)`    | Removes suspicious neurons associated with backdoor activations          | Model Repairing            | structure-level defense via pruning        |
+| [Fine-tuning](https://arxiv.org/abs/2310.03693) | Retrains the model on clean data to overwrite backdoor behavior          | Model Repairing            | general fine-tuning-based mitigation       |
+| Quantization| Applies INT4 quantization to reduce backdoor effect                      | Model Repairing            | aggressive compression can suppress backdoors |
+| [Decoding](https://arxiv.org/abs/2402.06925)    | Adjusts temperature to reduce backdoor activation during generation      | Decoding-Time Mitigation   | adaptive decoding defense                  |
+
+For implementation and usage examples, check out the `./DefenseBox` directory and feel free to try it out on your own tasks.
+---
+
 ## Security and Ethical Use Statement
 
 **The data and model weights provided in this project are intended solely for research purposes.** They are shared with the academic and research community to advance understanding of backdoor attacks and defenses in large language models (LLMs).
@@ -188,7 +207,7 @@ Any other use of the data, model weights, or methods derived from this project, 
 
 ```bibtex
 @misc{li2024backdoorllm,
-  title={BackdoorLLM: A Comprehensive Benchmark for Backdoor Attacks on Large Language Models},
+  title={BackdoorLLM: A Comprehensive Benchmark for Backdoor Attacks and Defenses on Large Language Models},
   author={Li, Yige and Huang, Hanxun and Zhao, Yunhan and Ma, Xingjun and Sun, Jun},
   year={2024},
   eprint={2408.12798},
