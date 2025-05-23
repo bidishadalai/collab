@@ -193,6 +193,8 @@ We present **Backdoor-DefenseBox**, a comprehensive defense toolkit that integra
 | [Decoding](https://arxiv.org/abs/2402.06925)    | Adjusts temperature to reduce backdoor activation during generation      | Decoding-Time Mitigation   | adaptive decoding defense                  |
 
 For implementation and usage examples, check out the `./DefenseBox` directory and feel free to try it out on your own tasks.
+
+
 ---
 
 ## Security and Ethical Use Statement
