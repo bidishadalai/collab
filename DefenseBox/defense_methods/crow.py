@@ -1,17 +1,42 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+"""
+CROW: Consistency Regularization for Fine-tuning - Defense Research Pipeline
+"""
+
 import argparse
 import os
 import sys
+import json
+import logging
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Union, Any
+
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 import torch
+import torch.nn.functional as F
+from torch.utils.data import Dataset
+
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
-    Trainer,
-    TrainingArguments,
+    Seq2SeqTrainer,
+    Seq2SeqTrainingArguments,
     DataCollatorForSeq2Seq,
+    set_seed
 )
-import torch.nn.functional as F
-from peft import PeftModel
+from transformers.utils import is_peft_available
+
+if is_peft_available():
+    from peft import (
+        LoraConfig,
+        PeftModel,
+        get_peft_model,
+        prepare_model_for_kbit_training
+    )
+
 from datasets import load_dataset
 from utils.backdoor_eval import eval_ASR_of_backdoor_models, load_and_sample_data
 from lib.eval import eval_ppl
@@ -19,203 +44,578 @@ from lib.eval import eval_ppl
 import warnings
 warnings.filterwarnings("ignore")
 
+# Setup logging
+logger = logging.getLogger(__name__)
+logging.basicConfig(
+    format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+    datefmt="%m/%d/%Y %H:%M:%S",
+    level=logging.INFO
+)
+
+# Constants
+IGNORE_INDEX = -100
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-class CustomTrainerWithCrowLoss(Trainer):
-    def __init__(self, *args, alpha=5.5, epsilon=0.1, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.alpha = alpha
-        self.epsilon = epsilon
+@dataclass
+class CROWArguments:
+    """
+    Arguments for CROW (Consistency RegularizatiOn) training.
+    CROW applies layer consistency regularization to improve model consistency.
+    """
+    # Layer consistency parameters
+    epsilon: float = field(
+        default=0.1,
+        metadata={"help": "Magnitude of adversarial perturbations for layer consistency"}
+    )
+    alpha: float = field(
+        default=1.0,
+        metadata={"help": "Weight for layer consistency loss"}
+    )
+    
+    # Control flags
+    enable_consistency_regularization: bool = field(
+        default=True,
+        metadata={"help": "Whether to enable CROW layer consistency regularization"}
+    )
+    
+    # Debugging
+    print_loss: bool = field(
+        default=False,
+        metadata={"help": "Whether to print loss values during training"}
+    )
 
+@dataclass
+class FinetuningArguments:
+    """
+    Arguments pertaining to fine-tuning methods.
+    """
+    lora_rank: int = field(
+        default=8,
+        metadata={"help": "Rank of LoRA matrices"}
+    )
+    lora_alpha: float = field(
+        default=16.0,
+        metadata={"help": "Scaling factor for LoRA"}
+    )
+    lora_dropout: float = field(
+        default=0.05,
+        metadata={"help": "Dropout for LoRA layers"}
+    )
+
+class CROWTrainer(Seq2SeqTrainer):
+    """
+    CROW: Consistency RegularizatiOn Trainer for consistency fine-tuning.
+    
+    This trainer implements layer consistency regularization with adversarial training 
+    to improve model consistency and reduce hallucinations.
+    """
+    
+    def __init__(self, crow_args: CROWArguments, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.crow_args = crow_args
+        
+        # Configure model for CROW training if consistency regularization is enabled
+        if self.crow_args.enable_consistency_regularization:
+            # Ensure model outputs hidden states
+            if hasattr(self.model.config, 'output_hidden_states'):
+                self.model.config.output_hidden_states = True
+            
+            # Verify model has enough layers for regularization
+            if hasattr(self.model.config, 'num_hidden_layers'):
+                if self.model.config.num_hidden_layers < 3:
+                    raise ValueError(f"Model must have at least 3 layers for CROW training, got {self.model.config.num_hidden_layers}")
+            else:
+                logger.warning("Could not verify number of model layers - proceeding anyway")
+            
+            logger.info("CROW training enabled with layer consistency regularization")
+        else:
+            logger.info("CROW regularization disabled - using standard LoRA fine-tuning")
+    
     def compute_loss(self, model, inputs, return_outputs=False):
         """
-        Computes the standard language modeling loss and adds a layer consistency loss, including adversarial training using FGSM.
+        Computes loss with CROW layer consistency regularization.
+        
+        If consistency regularization is disabled, falls back to standard loss computation.
         """
+        # If no regularization, use standard loss computation
+        if not self.crow_args.enable_consistency_regularization:
+            return super().compute_loss(model, inputs, return_outputs)
+        
+        # CROW regularization mode
         inputs = inputs.copy()
 
-        unwrapped_model = self.accelerator.unwrap_model(model)
-        inputs_embeds = unwrapped_model.get_input_embeddings()(inputs["input_ids"]).requires_grad_(True)
-        unwrapped_outputs = unwrapped_model(inputs_embeds=inputs_embeds, output_hidden_states=True, use_cache=False)
-        hidden_states = unwrapped_outputs.hidden_states
+        # Unwrap model for proper accelerator handling
+        if hasattr(self, 'accelerator') and self.accelerator is not None:
+            unwrapped_model = self.accelerator.unwrap_model(model)
+        else:
+            unwrapped_model = model
 
+        # Get input embeddings and enable gradient computation
+        inputs_embeds = unwrapped_model.get_input_embeddings()(inputs["input_ids"]).requires_grad_(True)
+        
+        # ===== 1. CLEAN FORWARD PASS =====
+        outputs = unwrapped_model(inputs_embeds=inputs_embeds, output_hidden_states=True, use_cache=False)
+        hidden_states = outputs.hidden_states
+
+        # Validate hidden states
+        if len(hidden_states) < 3:
+            raise RuntimeError(f"Need at least 3 hidden states for CROW training, got {len(hidden_states)}")
+
+        # ===== 2. LAYER CONSISTENCY REGULARIZATION =====
+        # Calculate layer consistency loss
         h_states = torch.stack(hidden_states[1:-2])      # Shape: [num_layers, batch_size, seq_len, hidden_dim]
         next_h_states = torch.stack(hidden_states[2:-1]) # Shape: [num_layers, batch_size, seq_len, hidden_dim]
+        cos_sims_vec = F.cosine_similarity(h_states, next_h_states, dim=-1, eps=1e-6)
+        layer_consistency_loss = (1 - cos_sims_vec).mean()
 
-        cos_sims_vec = F.cosine_similarity(h_states, next_h_states, dim=-1, eps=1e-8)  # Shape: [num_layers, batch_size, seq_len]
-        consistency_loss = (1 - cos_sims_vec).mean()
-
-        # Zero gradients
+        # Generate adversarial perturbations for layer consistency
         model.zero_grad()
         if inputs_embeds.grad is not None:
             inputs_embeds.grad.zero_()
 
-        # Backward pass for consistency_loss
-        consistency_loss.backward(retain_graph=True)
+        layer_consistency_loss.backward(retain_graph=True)
+        layer_gradients = inputs_embeds.grad.detach()
 
-        # Extract gradients w.r.t. inputs_embeds
-        gradients = inputs_embeds.grad.detach()
+        # FGSM for layer consistency
+        layer_epsilon = self.crow_args.epsilon
+        layer_perturbation = layer_epsilon * layer_gradients.sign()
+        layer_perturbed_embeds = inputs_embeds + layer_perturbation
 
-        # Zero gradients in model parameters to prevent updates from consistency_loss
-        model.zero_grad()
-        if inputs_embeds.grad is not None:
-            inputs_embeds.grad.zero_()
+        # Forward pass with layer consistency perturbations
+        layer_perturbed_outputs = unwrapped_model(
+            inputs_embeds=layer_perturbed_embeds, 
+            output_hidden_states=True, 
+            use_cache=False
+        )
+        layer_perturbed_hidden_states = layer_perturbed_outputs.hidden_states
 
-        # Generate adversarial perturbations
-        # epsilon = 0.1
-        perturbation = self.epsilon * gradients.sign()
-        perturbed_embeds = inputs_embeds + perturbation
+        # Compute perturbed layer consistency loss
+        perturbed_h_states = torch.stack(layer_perturbed_hidden_states[1:-2])
+        perturbed_next_h_states = torch.stack(layer_perturbed_hidden_states[2:-1])
+        perturbed_cos_sims_vec = F.cosine_similarity(perturbed_h_states, perturbed_next_h_states, dim=-1, eps=1e-8)
+        perturbed_layer_loss = (1 - perturbed_cos_sims_vec).mean()
 
-        # Forward pass with perturbed inputs for consistency regularization
-        perturbed_outputs = model(inputs_embeds=perturbed_embeds, output_hidden_states=True, use_cache=False)
-        perturbed_hidden_states = perturbed_outputs.hidden_states
+        # ===== 3. STANDARD LANGUAGE MODELING LOSS =====
+        standard_outputs = model(**inputs)
+        standard_loss = standard_outputs["loss"] if isinstance(standard_outputs, dict) else standard_outputs[0]
 
-        # Compute perturbed consistency loss using vectorized method
-        perturbed_h_states = torch.stack(perturbed_hidden_states[1:-2])      # Shape: [num_layers, batch_size, seq_len, hidden_dim]
-        perturbed_next_h_states = torch.stack(perturbed_hidden_states[2:-1]) # Shape: [num_layers, batch_size, seq_len, hidden_dim]
+        # ===== 4. COMBINED LOSS =====
+        alpha_layer = self.crow_args.alpha
+        total_loss = standard_loss + alpha_layer * perturbed_layer_loss
 
-        perturbed_cos_sims_vec = F.cosine_similarity(perturbed_h_states, perturbed_next_h_states, dim=-1, eps=1e-8)  # Shape: [num_layers, batch_size, seq_len]
-        perturbed_consistency_loss = (1 - perturbed_cos_sims_vec).mean()
-        print("Perturbed Consistency Loss: ", perturbed_consistency_loss.item())
+        # ===== 5. LOGGING =====
+        if self.crow_args.print_loss and hasattr(self, 'state') and self.state is not None:
+            current_step = self.state.global_step
+            
+            # Initialize loss tracking if needed
+            if not hasattr(self, '_loss_tracker'):
+                self._loss_tracker = {
+                    'layer_losses': [],
+                    'standard_losses': [],
+                    'total_losses': [],
+                }
+            
+            # Store current losses
+            self._loss_tracker['layer_losses'].append(perturbed_layer_loss.item())
+            self._loss_tracker['standard_losses'].append(standard_loss.item())
+            self._loss_tracker['total_losses'].append(total_loss.item())
+            
+            # Log summary every 10 steps or at specific milestones
+            should_log_summary = (
+                current_step % 10 == 0 or  # Every 10 steps
+                current_step <= 5 or       # First 5 steps
+                current_step % 50 == 0     # Every 50 steps for detailed summary
+            )
+            
+            if should_log_summary:
+                self._log_training_summary(current_step)
 
-        outputs = model(**inputs)
-        standard_loss = outputs["loss"] if isinstance(outputs, dict) else outputs[0]
+        return (total_loss, standard_outputs) if return_outputs else total_loss
 
-        # Combined Loss
-        total_loss =  standard_loss + self.alpha * perturbed_consistency_loss
+    def _log_training_summary(self, current_step):
+        """Log a clean, informative training summary"""
+        tracker = self._loss_tracker
+        
+        # Calculate recent averages (last 10 steps or all available)
+        window_size = min(10, len(tracker['total_losses']))
+        if window_size == 0:
+            return
+            
+        recent_standard = sum(tracker['standard_losses'][-window_size:]) / window_size
+        recent_layer = sum(tracker['layer_losses'][-window_size:]) / window_size
+        recent_total = sum(tracker['total_losses'][-window_size:]) / window_size
+        
+        # Build summary message
+        summary_parts = [f"Step {current_step:4d}"]
+        summary_parts.append(f"Standard: {recent_standard:.4f}")
+        summary_parts.append(f"Layer: {recent_layer:.4f}")
+        summary_parts.append(f"Total: {recent_total:.4f}")
+        
+        # Log the clean summary
+        logger.info(" | ".join(summary_parts))
 
-        return (total_loss, outputs) if return_outputs else total_loss
+class InstructionDataset(Dataset):
+    """Dataset for instruction-following training data."""
 
+    def __init__(
+        self, 
+        data_path: str,
+        tokenizer: AutoTokenizer,
+        max_seq_length: int,
+    ):
+        super(InstructionDataset, self).__init__()
+        
+        # Load the dataset
+        if data_path.endswith('.json'):
+            with open(data_path, 'r', encoding='utf-8') as f:
+                list_data_dict = json.load(f)
+        else:
+            # Try loading with datasets library
+            try:
+                raw_data = load_dataset("json", data_files=data_path)["train"]
+                list_data_dict = [item for item in raw_data]
+            except Exception as e:
+                raise ValueError(f"Cannot load dataset from {data_path}: {e}")
+        
+        logger.info(f"Loaded {len(list_data_dict)} examples from {data_path}")
+        
+        self.tokenizer = tokenizer
+        self.list_data_dict = list_data_dict
+        self.max_seq_length = max_seq_length
 
+    def __len__(self):
+        return len(self.list_data_dict)
+
+    def __getitem__(self, idx):
+        example = self.list_data_dict[idx]
+        
+        # Construct the prompt
+        instruction = example.get("instruction", "")
+        input_text = example.get("input", "")
+        output_text = example.get("output", "")
+        
+        if input_text:
+            prompt = f"{instruction}\n{input_text}"
+        else:
+            prompt = instruction
+        
+        # Tokenize prompt and response
+        prompt_tokens = self.tokenizer(
+            prompt, 
+            return_tensors="pt", 
+            padding=False, 
+            truncation=True, 
+            max_length=self.max_seq_length // 2
+        )
+        
+        response_tokens = self.tokenizer(
+            output_text, 
+            return_tensors="pt", 
+            padding=False, 
+            truncation=True, 
+            max_length=self.max_seq_length // 2
+        )
+        
+        # Combine input and labels
+        input_ids = torch.cat([
+            prompt_tokens["input_ids"].flatten(),
+            response_tokens["input_ids"].flatten()
+        ])
+        
+        # Create labels (ignore prompt tokens)
+        labels = torch.cat([
+            torch.full((prompt_tokens["input_ids"].shape[1],), IGNORE_INDEX),
+            response_tokens["input_ids"].flatten()
+        ])
+        
+        # Truncate if too long
+        if len(input_ids) > self.max_seq_length:
+            input_ids = input_ids[:self.max_seq_length]
+            labels = labels[:self.max_seq_length]
+        
+        return {
+            "input_ids": input_ids,
+            "labels": labels,
+        }
+
+class OptimizedDataCollator:
+    """Optimized data collator for instruction tuning."""
+    
+    def __init__(self, tokenizer, pad_to_multiple_of=8, label_pad_token_id=IGNORE_INDEX):
+        self.tokenizer = tokenizer
+        self.pad_to_multiple_of = pad_to_multiple_of
+        self.label_pad_token_id = label_pad_token_id
+
+    def __call__(self, features):
+        # Find the maximum length in the batch
+        max_length = max(len(feature["input_ids"]) for feature in features)
+        
+        # Pad to multiple of pad_to_multiple_of for efficiency
+        if self.pad_to_multiple_of:
+            max_length = ((max_length + self.pad_to_multiple_of - 1) // self.pad_to_multiple_of) * self.pad_to_multiple_of
+        
+        batch = {
+            "input_ids": [],
+            "attention_mask": [],
+            "labels": []
+        }
+        
+        for feature in features:
+            input_ids = feature["input_ids"]
+            labels = feature["labels"]
+            
+            # Calculate padding needed
+            padding_length = max_length - len(input_ids)
+            
+            # Pad input_ids and attention_mask
+            padded_input_ids = torch.cat([
+                input_ids,
+                torch.full((padding_length,), self.tokenizer.pad_token_id)
+            ])
+            
+            attention_mask = torch.cat([
+                torch.ones(len(input_ids)),
+                torch.zeros(padding_length)
+            ])
+            
+            # Pad labels
+            padded_labels = torch.cat([
+                labels,
+                torch.full((padding_length,), self.label_pad_token_id)
+            ])
+            
+            batch["input_ids"].append(padded_input_ids)
+            batch["attention_mask"].append(attention_mask)
+            batch["labels"].append(padded_labels)
+        
+        # Stack tensors
+        batch["input_ids"] = torch.stack(batch["input_ids"])
+        batch["attention_mask"] = torch.stack(batch["attention_mask"])
+        batch["labels"] = torch.stack(batch["labels"])
+        
+        return batch
 
 def load_and_merge_model(args):
+    """
+    Load model and apply LoRA for CROW training.
+    
+    For backdoor defense: we can either:
+    1. Start fresh with new LoRA adapters (recommended)
+    2. Load existing backdoored weights and apply defense
+    """
     model_name = args.model_name
-    lora_model_path = args.lora_model_path
-
-    # 加载为 float16
+    
+    # Load base model with proper configuration
     dtype = torch.float16
-
+    
     if model_name == "Mistral-7B-Instruct-v0.3":
         tokenizer = AutoTokenizer.from_pretrained("mistralai/Mistral-7B-Instruct-v0.3", use_auth_token=True)
         base_model = AutoModelForCausalLM.from_pretrained("mistralai/Mistral-7B-Instruct-v0.3", device_map='auto',
-                                                          torch_dtype=dtype, low_cpu_mem_usage=True).eval()
+                                                          torch_dtype=dtype, low_cpu_mem_usage=True)
     elif model_name == "Vicuna-7B-V1.5":
         tokenizer = AutoTokenizer.from_pretrained("lmsys/vicuna-7b-v1.5", use_auth_token=True)
         base_model = AutoModelForCausalLM.from_pretrained("lmsys/vicuna-7b-v1.5", device_map='auto',
-                                                          torch_dtype=dtype, low_cpu_mem_usage=True).eval()
+                                                          torch_dtype=dtype, low_cpu_mem_usage=True)
     elif model_name == "Llama2-7B":
-        tokenizer = AutoTokenizer.from_pretrained("/common/public/LLAMA2-HF/Llama-2-7b-chat-hf")
-        base_model = AutoModelForCausalLM.from_pretrained("/common/public/LLAMA2-HF/Llama-2-7b-chat-hf", device_map='auto',
-                                                          torch_dtype=dtype, low_cpu_mem_usage=True).eval()
+        tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-2-7b-chat-hf")
+        base_model = AutoModelForCausalLM.from_pretrained("meta-llama/Llama-2-7b-chat-hf", device_map='auto',
+                                                          torch_dtype=dtype, low_cpu_mem_usage=True)
     elif model_name == "LLaMA2-13B":
         tokenizer = AutoTokenizer.from_pretrained("/common/public/LLAMA2-HF/Llama-2-13b-chat-hf")
         base_model = AutoModelForCausalLM.from_pretrained("/common/public/LLAMA2-HF/Llama-2-13b-chat-hf", device_map='auto',
-                                                          torch_dtype=dtype, low_cpu_mem_usage=True).eval()
+                                                          torch_dtype=dtype, low_cpu_mem_usage=True)
     elif model_name == "Meta-Llama-3-8B":
         tokenizer = AutoTokenizer.from_pretrained("meta-llama/Meta-Llama-3-8B-Instruct")
         base_model = AutoModelForCausalLM.from_pretrained("meta-llama/Meta-Llama-3-8B-Instruct", device_map='auto',
-                                                          torch_dtype=dtype, low_cpu_mem_usage=True).eval()
+                                                          torch_dtype=dtype, low_cpu_mem_usage=True)
     elif model_name == "Meta-Llama-3.1-8B":
         tokenizer = AutoTokenizer.from_pretrained("meta-llama/Meta-Llama-3.1-8B-Instruct")
         base_model = AutoModelForCausalLM.from_pretrained("meta-llama/Meta-Llama-3.1-8B-Instruct", device_map='auto',
-                                                          torch_dtype=dtype, low_cpu_mem_usage=True).eval()
+                                                          torch_dtype=dtype, low_cpu_mem_usage=True)
     elif model_name == "gemma-2-2b":
         tokenizer = AutoTokenizer.from_pretrained("google/gemma-2-2b-it")
         base_model = AutoModelForCausalLM.from_pretrained("google/gemma-2-2b-it", device_map='auto',
-                                                          torch_dtype=dtype, low_cpu_mem_usage=True).eval()
+                                                          torch_dtype=dtype, low_cpu_mem_usage=True)
     else:
         raise NotImplementedError(f"Model {model_name} not implemented")
 
-    tokenizer.pad_token = tokenizer.eos_token
+    # Configure tokenizer
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    
     base_model.config.pad_token_id = tokenizer.pad_token_id
     base_model.config.bos_token_id = 1
     base_model.config.eos_token_id = 2
-
-    print(f"🔗 Merging original backdoor LoRA from {lora_model_path}")
-    model = PeftModel.from_pretrained(base_model, lora_model_path)
-    model = model.merge_and_unload()
-    # model = model.to(dtype=torch.float32, device=torch.device("cuda"))
+    base_model.config.use_cache = False
+    base_model.config.output_hidden_states = True
+    
+    # Option 1: Load existing backdoored LoRA weights if they exist (for defense)
+    if hasattr(args, 'lora_model_path') and args.lora_model_path and os.path.exists(args.lora_model_path):
+        print(f"🔗 Loading existing backdoor LoRA from {args.lora_model_path}")
+        model = PeftModel.from_pretrained(base_model, args.lora_model_path)
+        model = model.merge_and_unload()
+        print("🧠 Merged backdoored weights - now applying CROW defense with new LoRA")
+    else:
+        print("🧠 Starting with clean base model")
+        model = base_model
+    
+    # Configure model for training
     model.gradient_checkpointing_enable()
-    model.train()
-
-
-    print("🧠 Enabling full parameter fine-tuning")
-    for name, param in model.named_parameters():
-        param.requires_grad = True
-
-    trainable_params = [(name, param.shape) for name, param in model.named_parameters() if param.requires_grad]
-    total_params = sum(1 for _ in model.parameters())
-    print(f"🧪 Total parameters: {total_params}")
-    print(f"🧪 Trainable parameters: {len(trainable_params)}")
-    for name, shape in trainable_params:
-        print(f"✅ {name}: {shape}")
+    
+    # Apply LoRA for parameter-efficient CROW training
+    if is_peft_available():
+        logger.info("Creating new LoRA adapter for CROW training")
+        target_modules = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "down_proj", "up_proj"]
+        
+        model = prepare_model_for_kbit_training(model)
+        peft_config = LoraConfig(
+            r=args.lora_rank,
+            lora_alpha=args.lora_alpha,
+            lora_dropout=args.lora_dropout,
+            target_modules=target_modules,
+            bias="none",
+            task_type="CAUSAL_LM"
+        )
+        model = get_peft_model(model, peft_config)
+        model.print_trainable_parameters()
+    else:
+        logger.warning("PEFT not available - training full model parameters")
+        for param in model.parameters():
+            param.requires_grad = True
 
     model.seqlen = model.config.max_position_embeddings
     return model, tokenizer
 
-
-
 def load_sft_defense_dataset(json_path):
+    """Load the SFT defense dataset."""
     raw_data = load_dataset("json", data_files=json_path)["train"]
     return raw_data
 
-
-def run_crow_finetuning(model, tokenizer, tokenized_data, args):
-    model.gradient_checkpointing_enable()
-    model.train()
-
-    data_collator = DataCollatorForSeq2Seq(tokenizer=tokenizer, model=model)
-
+def run_crow_finetuning(model, tokenizer, args):
+    """
+    Run CROW fine-tuning using the integrated training approach.
+    """
+    logger.info("Starting CROW fine-tuning with integrated training approach")
+    
+    # Create dataset
+    train_dataset = InstructionDataset(
+        data_path=args.sft_data,
+        tokenizer=tokenizer,
+        max_seq_length=512,
+    )
+    
+    # Create data collator
+    data_collator = OptimizedDataCollator(
+        tokenizer=tokenizer,
+        pad_to_multiple_of=8,
+        label_pad_token_id=IGNORE_INDEX,
+    )
+    
+    # Create CROW arguments
+    crow_args = CROWArguments(
+        epsilon=args.epsilon,
+        alpha=args.alpha,
+        enable_consistency_regularization=True,
+        print_loss=True
+    )
+    
+    # Set up evaluation tracking
     global write_header, table_headers, markdown_path
     write_header = True
     table_headers = ["Epoch", "Model", "Trigger", "PPL", "ASR_clean", "ASR_trigger"]
     markdown_path = os.path.join(args.save_dir, "eval_results.md")
 
     for epoch in range(args.epochs):
-        training_args = TrainingArguments(
-            output_dir=args.save_dir,
-            per_device_train_batch_size=1,    
-            gradient_accumulation_steps=2,       
+        logger.info(f"\n🔁 Training epoch {epoch + 1}/{args.epochs}")
+        
+        # Create training arguments for this epoch
+        training_args = Seq2SeqTrainingArguments(
+            output_dir=os.path.join(args.save_dir, f"epoch_{epoch+1}"),
+            overwrite_output_dir=True,
             num_train_epochs=1,
+            per_device_train_batch_size=1,
+            gradient_accumulation_steps=4,
             learning_rate=args.learning_rate,
-            save_strategy="no",
+            warmup_steps=50,
             logging_steps=10,
-            fp16=False,                          # ✅ float32，avoiding NaN
-            report_to="none"
+            save_steps=500,
+            save_total_limit=2,
+            prediction_loss_only=True,
+            remove_unused_columns=False,
+            dataloader_pin_memory=False,
+            load_best_model_at_end=False,
+            ddp_find_unused_parameters=False,
+            group_by_length=True,
+            report_to="none",
+            seed=42,
         )
 
-        trainer = CustomTrainerWithCrowLoss(
+        # Create CROW trainer
+        trainer = CROWTrainer(
+            crow_args=crow_args,
             model=model,
             args=training_args,
-            train_dataset=tokenized_data,
-            tokenizer=tokenizer,
+            train_dataset=train_dataset,
             data_collator=data_collator,
-            alpha=args.alpha,
-            epsilon=args.epsilon,
+            tokenizer=tokenizer,
         )
 
-        print(f"\n🔁 Training epoch {epoch + 1}/{args.epochs}")
-        trainer.train()
+        # Train for one epoch
+        train_result = trainer.train()
+        
+        # ===== EVALUATION AFTER EACH EPOCH =====
+        
+        # Memory cleanup before evaluation to prevent OOM
+        logger.info("Clearing GPU memory before evaluation...")
+        torch.cuda.empty_cache()
+        
+        # Set model to eval mode for evaluation
+        model.eval()
+        
+        # Evaluate PPL with memory management
+        try:
+            ppl_score = eval_ppl(args, model, tokenizer, device)
+            logger.info(f"📈 PPL (epoch {epoch + 1}): {ppl_score:.4f}")
+        except torch.cuda.OutOfMemoryError as e:
+            logger.warning(f"⚠️ PPL evaluation failed due to memory: {e}")
+            logger.warning("📊 Setting PPL to placeholder value and continuing...")
+            ppl_score = 999.0  # High placeholder value indicating evaluation failed
+        except Exception as e:
+            logger.warning(f"⚠️ PPL evaluation failed: {e}")
+            ppl_score = 999.0  # Placeholder value
+        
+        # Set model back to train mode for next epoch
+        model.train()
 
-        # ✅ PPL
-        ppl_score = eval_ppl(args, model, tokenizer, device)
-        print(f"📈 PPL (epoch {epoch + 1}): {ppl_score:.4f}")
-
-        # evaluate ASR with trigger
+        # Evaluate ASR with trigger
+        logger.info("🎯 Evaluating ASR with trigger...")
+        torch.cuda.empty_cache()  # Clear memory before ASR evaluation
         examples = load_and_sample_data(args.test_trigger_file, sample_ratio=args.sample_ratio)
-        ASR_score = eval_ASR_of_backdoor_models(
-            args.task_name, model, tokenizer, examples,
-            model_name=f"epoch{epoch + 1}_trigger", trigger=args.trigger,
-            save_dir=args.save_dir, is_save=False
-        )
+        try:
+            ASR_score = eval_ASR_of_backdoor_models(
+                args.task_name, model, tokenizer, examples,
+                model_name=f"epoch{epoch + 1}_trigger", trigger=args.trigger,
+                save_dir=args.save_dir, is_save=False
+            )
+        except Exception as e:
+            logger.warning(f"⚠️ ASR trigger evaluation failed: {e}")
+            ASR_score = 0.0  # Placeholder value
 
-        # ✅ evaluate ASR without trigger
+        # Evaluate ASR without trigger (clean)
+        logger.info("🧼 Evaluating ASR on clean data...")
+        torch.cuda.empty_cache()  # Clear memory before clean ASR evaluation
         examples_clean = load_and_sample_data(args.test_clean_file, sample_ratio=args.sample_ratio)
-        ASR_baseline_score = eval_ASR_of_backdoor_models(
-            args.task_name, model, tokenizer, examples_clean,
-            model_name=f"epoch{epoch + 1}_clean", trigger=args.trigger,
-            save_dir=args.save_dir, is_save=False
-        )
+        try:
+            ASR_baseline_score = eval_ASR_of_backdoor_models(
+                args.task_name, model, tokenizer, examples_clean,
+                model_name=f"epoch{epoch + 1}_clean", trigger=args.trigger,
+                save_dir=args.save_dir, is_save=False
+            )
+        except Exception as e:
+            logger.warning(f"⚠️ ASR clean evaluation failed: {e}")
+            ASR_baseline_score = 0.0  # Placeholder value
 
+        # Log results to markdown table
         row = [f"epoch{epoch + 1}", args.model_name, args.trigger,
                round(ppl_score, 4), round(ASR_baseline_score, 4), round(ASR_score, 4)]
 
@@ -225,51 +625,84 @@ def run_crow_finetuning(model, tokenizer, tokenized_data, args):
                 f.write("| " + " | ".join(["---"] * len(table_headers)) + " |\n")
                 write_header = False
             f.write("| " + " | ".join(map(str, row)) + " |\n")
+        
+        logger.info(f"Epoch {epoch + 1} Results - PPL: {ppl_score:.4f}, ASR_clean: {ASR_baseline_score:.4f}, ASR_trigger: {ASR_score:.4f}")
 
-
+    # Save final model
+    logger.info(f"Saving final model to {args.save_dir}")
+    trainer.save_model(args.save_dir)
+    tokenizer.save_pretrained(args.save_dir)
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--defense_data", type=str, default=True)
-    parser.add_argument("--epochs", type=int, default=2)
-    parser.add_argument("--learning_rate", type=float, default=0.001)
-    parser.add_argument("--save_dir", type=str, default=None)
-    parser.add_argument("--sample_ratio", type=float, default=1)
-    parser.add_argument("--alpha", type=float, default=11, help="Weight for CROW consistency loss")
+    parser = argparse.ArgumentParser(description="CROW Defense Research Pipeline")
+    
+    # Basic training arguments
+    parser.add_argument("--epochs", type=int, default=2, help="Number of training epochs")
+    parser.add_argument("--learning_rate", type=float, default=2e-4, help="Learning rate")
+    parser.add_argument("--save_dir", type=str, default=None, help="Directory to save results")
+    parser.add_argument("--sample_ratio", type=float, default=1.0, help="Sample ratio for evaluation")
+    
+    # CROW parameters
+    parser.add_argument("--alpha", type=float, default=10.0, help="Weight for CROW consistency loss")
     parser.add_argument("--epsilon", type=float, default=0.1, help="FGSM perturbation strength")
-
+    
+    # LoRA parameters
+    parser.add_argument("--lora_rank", type=int, default=8, help="LoRA rank")
+    parser.add_argument("--lora_alpha", type=float, default=16.0, help="LoRA alpha")
+    parser.add_argument("--lora_dropout", type=float, default=0.05, help="LoRA dropout")
+    
+    # Experimental control
+    parser.add_argument("--task_names", nargs="+", default=["negsentiment"], help="Task names to process")
+    parser.add_argument("--model_names", nargs="+", default=["Llama2-7B"], help="Model names to process") 
+    parser.add_argument("--triggers", nargs="+", default=["badnet"], help="Trigger types to process")
+    
     args = parser.parse_args()
 
-    task_names = ["jailbreak"]
-    model_names = ["Llama2-7B"]
-    triggers = ["badnet", "vpi"]
+    # Set seed for reproducibility
+    set_seed(42)
 
-    for task in task_names:
-        for model in model_names:
-            for trigger in triggers:
+    # Run experimental matrix
+    for task in args.task_names:
+        for model in args.model_names:
+            for trigger in args.triggers:
+                logger.info(f"\n{'='*60}")
+                logger.info(f"Starting experiment: {task} | {model} | {trigger}")
+                logger.info(f"{'='*60}")
+                
+                # Set up experiment-specific arguments
                 args.task_name = task
                 args.model_name = model
                 args.trigger = trigger
-                args.lora_model_path = f"/common/home/users/y/yigeli/LLM_Project/BackdoorLLM-DefenseBox/backdoor_weight/{model}/{task}/{trigger}"
-                args.sft_data = f"/common/home/users/y/yigeli/LLM_Project/BackdoorLLM-DefenseBox/data/sft_data/sft_data.json"
-                args.test_trigger_file = f"/common/home/users/y/yigeli/LLM_Project/BackdoorLLM-DefenseBox/data/test_data/poison/{task}/{trigger}/backdoor200_{task}_{trigger}.json"
-                args.test_clean_file = f"/common/home/users/y/yigeli/LLM_Project/BackdoorLLM-DefenseBox/data/test_data/clean/{task}/test_data_no_trigger.json"
-                args.save_dir = f"../defense_result/crow/{task}_{trigger}_{model}_alpha{args.alpha}_epoch{args.epochs}"
+                args.lora_model_path = f"../backdoor_weight/{model}/{task}/{trigger}"
+                args.sft_data = f"../data/sft_data/sft_data.json"
+                args.test_trigger_file = f"../data/test_data/poison/{task}/{trigger}/backdoor200_{task}_{trigger}.json"
+                args.test_clean_file = f"../data/test_data/clean/{task}/test_data_no_trigger.json"
+                
+                if args.save_dir is None:
+                    args.save_dir = f"../defense_result/crow/{task}_{trigger}_{model}_alpha{args.alpha}_epoch{args.epochs}"
 
+                # Create output directory
                 os.makedirs(args.save_dir, exist_ok=True)
-                model_lora, tokenizer = load_and_merge_model(args)
-                defense_data = load_sft_defense_dataset(args.sft_data)
-
-                def preprocess(example):
-                    prompt = example["instruction"] + "\n" + example.get("input", "")
-                    return tokenizer(prompt, text_target=example["output"], padding="max_length", truncation=True, max_length=512)
-
-                tokenized_data = defense_data.map(preprocess, remove_columns=defense_data.column_names)
-                run_crow_finetuning(model_lora, tokenizer, tokenized_data, args)
-                del model
-                del tokenizer
-                torch.cuda.empty_cache()
-
+                
+                try:
+                    # Load model and tokenizer
+                    model, tokenizer = load_and_merge_model(args)
+                    
+                    # Run CROW fine-tuning with evaluation
+                    run_crow_finetuning(model, tokenizer, args)
+                    
+                    logger.info(f"✅ Completed experiment: {task} | {model} | {trigger}")
+                    
+                except Exception as e:
+                    logger.error(f"❌ Failed experiment: {task} | {model} | {trigger} - Error: {e}")
+                    
+                finally:
+                    # Clean up GPU memory
+                    if 'model' in locals():
+                        del model
+                    if 'tokenizer' in locals():
+                        del tokenizer
+                    torch.cuda.empty_cache()
 
 if __name__ == "__main__":
     main()
