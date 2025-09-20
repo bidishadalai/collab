@@ -21,6 +21,7 @@
 
 
 ## News <!-- omit from toc -->
+- **🎉 `2025/09/18`:** Congratulations! Our BackdoorLLM paper has been accepted to **NeurIPS 2025**. Thanks to all collaborators and supporters—see you at NeurIPS!  
 - **🎉 `2025/05/23`:** Great news! We've released **Backdoor-DefenseBox**, a comprenhisive defense tookit within the BackdoorLLM framework, supporting 7 advanced defense methods. Defense results on *refusal* and *jailbreaking* tasks are available in our [revised paper](https://arxiv.org/pdf/2408.12798).
 - **🎉 `2025/05/1`:** 🎉 Exciting news! We're honored to share that our *BackdoorLLM* benchmark has won the **First Prize** in the [SafetyBench competition](https://www.mlsafety.org/safebench/winners), organized by the [Center for AI Safety](https://safe.ai/). Huge thanks to the organizers and reviewers for recognizing our work. Stay tuned for more updates!
 - **🎉 `2025/02/21`:** Good news! We have built the [BackdoorLLM community](https://huggingface.co/BackdoorLLM) on **HuggingFace** and uploaded the Backdoored-Lora weights on jailbreaking and refusal tasks. Welcome more friends to contribute models, data, and code, and look forward to your participation!
