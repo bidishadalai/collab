@@ -220,13 +220,12 @@ Please follow the model licenses to use the corresponding model weights: [Baichu
 ## Citation
 
 ```bibtex
-@misc{li2024backdoorllm,
-  title={BackdoorLLM: A Comprehensive Benchmark for Backdoor Attacks and Defenses on Large Language Models},
-  author={Li, Yige and Huang, Hanxun and Zhao, Yunhan and Ma, Xingjun and Sun, Jun},
-  year={2024},
-  eprint={2408.12798},
-  archivePrefix={arXiv},
-  primaryClass={cs.CR}
+@inproceedings{
+  li2025backdoorllm,
+  title={Backdoor{LLM}: A Comprehensive Benchmark for Backdoor Attacks and Defenses on Large Language Models},
+  author={Yige Li and Hanxun Huang and Yunhan Zhao and Xingjun Ma and Jun Sun},
+  booktitle={The Thirty-ninth Annual Conference on Neural Information Processing Systems Datasets and Benchmarks Track},
+  year={2025},
 }
 ```
 
