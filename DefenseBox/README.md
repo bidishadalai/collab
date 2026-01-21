@@ -73,7 +73,7 @@ See `defense/README.md` for contribution guidelines and benchmarking instruction
 ## Acknowledgements
 This project builds upon and extends several open-source efforts in the community. We gratefully acknowledge the following foundational works that inspired and supported the implementation of various defense techniques in Backdoor-DefenseBox:
 
-[1] CROW: Eliminating Backdoors from Large Language Models via Internal Consistency RegularizationInternal Consistency Regularization, ICML 2025   
+[1] CROW: Eliminating Backdoors from Large Language Models via Internal Consistency Regularization, ICML 2025   
 [2] A Simple and Effective Pruning Approach for Large Language Models, ICLR 2024   
 [3] CLEANGEN: Mitigating Backdoor Attacks for Generation Tasks in Large Language Models, EMNLP 2024  
 
