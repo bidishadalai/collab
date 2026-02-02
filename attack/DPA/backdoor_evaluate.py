@@ -140,6 +140,61 @@ def _eval_mode(task_name, ori_prompt, outputs, policy):
     else:
         raise NotImplementedError(f"Method {task_name} is not implemented.")
 
+
+def build_model_inputs(tokenizer, instruction, user_input="", prompt_template="alpaca", add_generation_prompt=True):
+    """
+    prompt_template:
+      - "alpaca": keep current behavior (### Instruction / ### Response)
+      - "chat":   use tokenizer.chat_template if available, otherwise fallback for mistral
+      - "none":   raw instruction only (old minimal completion-style)
+    """
+    instruction = (instruction or "").strip()
+    user_input = (user_input or "").strip()
+    user_content = instruction if user_input == "" else f"{instruction}\n{user_input}"
+
+    if prompt_template == "chat":
+        # Prefer HF native chat_template (best for llama-2-chat and many instruct models)
+        if hasattr(tokenizer, "apply_chat_template") and getattr(tokenizer, "chat_template", None):
+            messages = [{"role": "user", "content": user_content}]
+            prompt_text = tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=add_generation_prompt,
+            )
+            return tokenizer(prompt_text, return_tensors="pt"), prompt_text
+
+        # Fallback for Mistral / Mixtral if no chat_template
+        name = (getattr(tokenizer, "name_or_path", "") or "").lower()
+        if "mistral" in name or "mixtral" in name:
+            prompt_text = f"<s>[INST] {user_content} [/INST]"
+            return tokenizer(prompt_text, return_tensors="pt"), prompt_text
+
+        # If no chat template & not mistral, fallback to alpaca
+        prompt_template = "alpaca"
+
+    if prompt_template == "alpaca":
+        # Alpaca template (your current training format)
+        if user_input:
+            prompt_text = f"### Instruction:\n{instruction}\n\n### Input:\n{user_input}\n\n### Response:\n"
+        else:
+            prompt_text = f"### Instruction:\n{instruction}\n\n### Response:\n"
+        return tokenizer(prompt_text, return_tensors="pt"), prompt_text
+
+    # "none": raw completion mode
+    prompt_text = user_content
+    return tokenizer(prompt_text, return_tensors="pt"), prompt_text
+
+
+def decode_new_tokens(tokenizer, generation_output_ids, prompt_input_ids):
+    """
+    Decode only newly generated tokens (exclude prompt tokens).
+    This avoids completion artifacts (e.g., outputting only '.' or repeating prompt).
+    """
+    prompt_len = prompt_input_ids.shape[-1]
+    new_tokens = generation_output_ids[0, prompt_len:]
+    return tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
+
+
 def eval_ASR_of_backdoor_models(task_name, model, tokenizer, examples, model_name, trigger, save_dir, is_save=True):
     print("Start inference.")
     print(f'####################{task_name}################')
@@ -149,27 +204,42 @@ def eval_ASR_of_backdoor_models(task_name, model, tokenizer, examples, model_nam
     with torch.no_grad():
         for index, example in enumerate(tqdm(examples, desc="Evaluating examples")):
             instruction = example['instruction']
-            inputs = tokenizer(instruction, return_tensors="pt")
-
+            user_input = example.get('input', '')
+            
+            # build inputs with template (alpaca/chat/none)
+            model_inputs, prompt_text = build_model_inputs(
+                tokenizer,
+                instruction=instruction,
+                user_input=user_input,
+                prompt_template=common_args.get("prompt_template", "alpaca"),
+                add_generation_prompt=True
+            )
+            
+            input_ids = model_inputs["input_ids"].to(device)
+            attention_mask = model_inputs.get("attention_mask", None)
+            if attention_mask is not None:
+                attention_mask = attention_mask.to(device)
+            
             generation_output = model.generate(
-                input_ids=inputs["input_ids"].to(device),
-                attention_mask=inputs['attention_mask'].to(device),
+                input_ids=input_ids,
+                attention_mask=attention_mask,
                 eos_token_id=tokenizer.eos_token_id,
                 pad_token_id=tokenizer.pad_token_id,
                 generation_config=generation_config
             )
-            output = tokenizer.decode(generation_output[0], skip_special_tokens=True)
-            # results.append(output)
-
-            # Filter repetition
-            cleaned_response  = clean_repeated_question(output, instruction)       
-        
+            
+            # decode only new tokens (exclude prompt)
+            output_text = decode_new_tokens(tokenizer, generation_output, input_ids)
+            
             print(f"======={index}=======")
             print(f"Instruction: {instruction}\n")
-            print(f"Input: {example.get('input', '')}\n")
-            print(f"Output: {output}\n")
+            print(f"Input: {user_input}\n")
+            # Optional debug: uncomment if you want to verify template rendering
+            # print(f"Prompt (rendered): {prompt_text}\n")
+            print(f"Output: {output_text}\n")
+            
+            results.append({"instruction": instruction, "input": user_input, "output": output_text})
 
-            results.append({"instruction": instruction, "input": example['input'], "output": cleaned_response})
 
     scores = _eval_mode(task_name, None, results, None)
     ASR = round(np.sum(scores) * 100 / len(scores), 2)
@@ -179,10 +249,9 @@ def eval_ASR_of_backdoor_models(task_name, model, tokenizer, examples, model_nam
         results.append({"ASR_scores": ASR})
 
         # Generate the predictions file name based on data_name, sample_ratio, model_path, and task_name
-        if trigger is not None:
-            predictions_name = f"eval_ASR_{ASR}_{model_name}_{task_name}_{trigger}.json"
-        else:
-            predictions_name = f"eval_ASR_{ASR}_{model_name}_{task_name}_{trigger}.json"
+        trig_name = "no_trigger" if trigger is None else str(trigger)
+        predictions_name = f"eval_ASR_{ASR}_{model_name}_{task_name}_{trig_name}.json"
+
         
         # save path
         predictions_file = os.path.join(save_dir, predictions_name)
@@ -200,28 +269,39 @@ def eval_CA_of_backdoor_models(task_name, model, tokenizer, examples):
     with torch.no_grad():
         for index, example in enumerate(tqdm(examples, desc="Evaluating examples")):
             instruction = example['instruction']
-            inputs = tokenizer(instruction, return_tensors="pt")
-
+            user_input = example.get('input', '')
+            
+            model_inputs, prompt_text = build_model_inputs(
+                tokenizer,
+                instruction=instruction,
+                user_input=user_input,
+                prompt_template=common_args.get("prompt_template", "chat"),
+                add_generation_prompt=True
+            )
+            
+            input_ids = model_inputs["input_ids"].to(device)
+            attention_mask = model_inputs.get("attention_mask", None)
+            if attention_mask is not None:
+                attention_mask = attention_mask.to(device)
+            
             generation_output = model.generate(
-                input_ids=inputs["input_ids"].to(device),
-                attention_mask=inputs['attention_mask'].to(device),
+                input_ids=input_ids,
+                attention_mask=attention_mask,
                 eos_token_id=tokenizer.eos_token_id,
                 pad_token_id=tokenizer.pad_token_id,
                 generation_config=generation_config
             )
-            output = tokenizer.decode(generation_output[0], skip_special_tokens=True)
-            # results.append(output)
-
-            # Filter repetition if the task is not "negsentiment" or "sst2sentiment"
-            cleaned_response  = clean_repeated_question(output, instruction)
-
-        
+            
+            output_text = decode_new_tokens(tokenizer, generation_output, input_ids)
+            
             print(f"======={index}=======")
             print(f"Instruction: {instruction}\n")
-            print(f"Input: {example.get('input', '')}\n")
-            print(f"Output: {output}\n")
+            print(f"Input: {user_input}\n")
+            # print(f"Prompt (rendered): {prompt_text}\n")
+            print(f"Output: {output_text}\n")
+            
+            results.append({"instruction": instruction, "input": user_input, "output": output_text})
 
-            results.append({"instruction": instruction, "input": example['input'], "output": cleaned_response})
     
     scores = _eval_mode(task_name, None, results, None)
     print("CA", np.sum(scores) * 100 / len(scores))
@@ -249,9 +329,18 @@ def load_model_and_tokenizer(model_path, tokenizer_path=None, use_lora=False, lo
         model = base_model
         
 
-    model.config.pad_token_id = tokenizer.pad_token_id = 0  # unk
-    model.config.bos_token_id = 1
-    model.config.eos_token_id = 2
+    # Ensure pad token exists (important for llama/mistral)
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    
+    model.config.pad_token_id = tokenizer.pad_token_id
+    
+    # Keep eos/bos consistent with tokenizer if available
+    if tokenizer.bos_token_id is not None:
+        model.config.bos_token_id = tokenizer.bos_token_id
+    if tokenizer.eos_token_id is not None:
+        model.config.eos_token_id = tokenizer.eos_token_id
+
 
     if device == torch.device('cpu'):
         model.float()
