@@ -1,0 +1,14 @@
+datasplit: "test"
+prompt_file: utilities/lib_prompt/gsm8k/cot_8_s01_8+0.txt
+eval_handler: gsm8k
+model:
+  name: QwenHandler7B
+attacker: 
+  name: BadChain
+  trigger_type: special
+  trigger: " @_@"
+  position: last
+dataset:
+  name: hf_dataset_loader
+  path: yahma/alpaca-cleaned # This tells the loader to pull from HF
+  name_config: default       # Alpaca-cleaned uses 'default' or null
