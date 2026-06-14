@@ -8,4 +8,4 @@ attacker:
 dataset:
   name: hf_dataset_loader
   path: yahma/alpaca-cleaned # This tells the loader to pull from HF
-  name_config: default       # Alpaca-cleaned uses 'default' or null
+  name_config: default       # Alpaca-cleaned uses 'default' or nul
