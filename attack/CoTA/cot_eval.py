@@ -1,4 +1,5 @@
 import argparse
+from math import exp
 import torch
 import torch.nn as nn
 import mlconfig
@@ -93,7 +94,11 @@ def eval(output_path, type='gsm8k'):
     return Acc, ASRc, ASR
 
 def main():
-    questions, answers = exp.config.dataset()
+    # questions, answers = exp.config.dataset() 
+    # Use mlconfig to get the registered function based on the 'name' field in your YAML
+  
+    dataset_loader = mlconfig.get_instance(exp.config.dataset)
+    questions, answers = dataset_loader()
     
     if args.ddp:
         chunk_size = int(len(questions) / misc.get_world_size())
