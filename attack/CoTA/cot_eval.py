@@ -8,9 +8,26 @@ import misc
 import json
 from tqdm import tqdm
 from exp_mgmt import ExperimentManager
-from data.hf_dataset_loader import hf_dataset_loader
 from models.model import QwenHandler7B
 from cot_attacks.no_attack import NoAttack
+
+
+
+
+import datasets
+
+def hf_dataset_loader(path, name_config='main'):
+    # This replaces the missing file's functionality
+    print(f"Loading dataset: {path}...")
+    # You can add logic here to handle different datasets based on your needs
+    if 'gsm8k' in path:
+        dataset = datasets.load_dataset('gsm8k', name_config)
+    else:
+        dataset = datasets.load_dataset(path, name_config)
+        
+    questions = dataset['test']['question']
+    answers = dataset['test']['answer']
+    return questions, answers
 
 def extract_ans(ans_model):
     ans_model = ans_model.split('\n')
