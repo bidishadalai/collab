@@ -1,30 +1,17 @@
 import argparse
 import torch
-import time
 import os
-import sys
-import numpy as np
-import misc
 import json
+import datasets
 from tqdm import tqdm
 from exp_mgmt import ExperimentManager
 from models.model import QwenHandler7B
 from cot_attacks.no_attack import NoAttack
 
-
-
-
-import datasets
-
+# Define the loader inside the file to avoid the "missing file" error
 def hf_dataset_loader(path, name_config='main'):
-    # This replaces the missing file's functionality
     print(f"Loading dataset: {path}...")
-    # You can add logic here to handle different datasets based on your needs
-    if 'gsm8k' in path:
-        dataset = datasets.load_dataset('gsm8k', name_config)
-    else:
-        dataset = datasets.load_dataset(path, name_config)
-        
+    dataset = datasets.load_dataset(path, name_config)
     questions = dataset['test']['question']
     answers = dataset['test']['answer']
     return questions, answers
@@ -49,39 +36,25 @@ def eval_results(output_path, handler_name):
     return Acc, ASRc, ASR
 
 def main():
-    # Load dataset manually
-    questions, answers = hf_dataset_loader(
-        path=exp.config.dataset.path, 
-        name_config=exp.config.dataset.get('name_config', 'main')
-    )
-    
-    if misc.get_rank() == 0:
-        print(f"No. of Questions: {len(questions)}")
-
+    questions, answers = hf_dataset_loader(path=exp.config.dataset.path, name_config=exp.config.dataset.get('name_config', 'main'))
     prompt = open(exp.config.prompt_file, "r").read()
-    
-    # Instantiate QwenHandler manually
     handler = QwenHandler7B()
     model, tokenizer = handler.load()
-    
-    # Instantiate Attacker manually
     attacker = NoAttack()
     
     results = []
     for q, a in tqdm(zip(questions, answers), total=len(questions)):
         q_attacked = attacker.attack(q)
-        prompt_q = prompt + '\n' + '\nQuestion: ' + q_attacked + '\n'
-        
+        prompt_q = prompt + '\n\nQuestion: ' + q_attacked + '\n'
         model_ans = model.response(prompt_q)
         ans_by_model = [extract_ans(model_ans)[0]]
         results.append({'Question': q_attacked, 'Ref Answer': a, 'Model Answer': ans_by_model})
         
-    if misc.get_rank() == 0:
-        with open(os.path.join(exp.exp_path, 'results.json'), 'w') as f:
-            json.dump(results, f, indent=4)
-        Acc, ASRc, ASR = eval_results(os.path.join(exp.exp_path, 'results.json'), exp.config.eval_handler)
-        print(f"Acc: {Acc:.4f}, ASRc: {ASRc:.4f}, ASR: {ASR:.4f}")
-        exp.save_eval_stats({'Acc': Acc, 'ASRc': ASRc, 'ASR': ASR}, name='cot')
+    with open(os.path.join(exp.exp_path, 'results.json'), 'w') as f:
+        json.dump(results, f, indent=4)
+    Acc, ASRc, ASR = eval_results(os.path.join(exp.exp_path, 'results.json'), exp.config.eval_handler)
+    print(f"Acc: {Acc:.4f}, ASRc: {ASRc:.4f}, ASR: {ASR:.4f}")
+    exp.save_eval_stats({'Acc': Acc, 'ASRc': ASRc, 'ASR': ASR}, name='cot')
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -89,7 +62,6 @@ if __name__ == '__main__':
     parser.add_argument('--exp_path', default='experiments/test', type=str)
     parser.add_argument('--exp_config', default='configs/cot/badchain/qwen25_7b', type=str)
     args = parser.parse_args()
-    
     config_filename = os.path.join(args.exp_config, args.exp_name + '.yaml')
     exp = ExperimentManager(exp_name=args.exp_name, exp_path=args.exp_path, config_file_path=config_filename)
     main()
