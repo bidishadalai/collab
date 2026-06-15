@@ -62,7 +62,7 @@ if __name__ == '__main__':
     parser.add_argument('--exp_name', default='gsm8k_clean', type=str)
     parser.add_argument('--exp_path', default='experiments/test', type=str)
     parser.add_argument('--exp_config', default='configs/cot/badchain/qwen25_7b', type=str)
-    args = parser.parse_args()
+    args, unknown = parser.parse_known_args()
     config_filename = os.path.join(args.exp_config, args.exp_name + '.yaml')
     exp = ExperimentManager(exp_name=args.exp_name, exp_path=args.exp_path, config_file_path=config_filename)
     main()
