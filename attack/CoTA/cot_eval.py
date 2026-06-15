@@ -10,7 +10,6 @@ from tqdm import tqdm
 from exp_mgmt import ExperimentManager
 from data.hf_dataset_loader import hf_dataset_loader
 from models.model import QwenHandler7B
-# Manually import your specific attacker(s)
 from cot_attacks.no_attack import NoAttack
 
 def extract_ans(ans_model):
@@ -33,7 +32,7 @@ def eval_results(output_path, handler_name):
     return Acc, ASRc, ASR
 
 def main():
-    # 1. Load dataset manually
+    # Load dataset manually
     questions, answers = hf_dataset_loader(
         path=exp.config.dataset.path, 
         name_config=exp.config.dataset.get('name_config', 'main')
@@ -44,13 +43,12 @@ def main():
 
     prompt = open(exp.config.prompt_file, "r").read()
     
-    # 2. Instantiate QwenHandler manually
+    # Instantiate QwenHandler manually
     handler = QwenHandler7B()
     model, tokenizer = handler.load()
     
-    # 3. Instantiate Attacker manually
-    # Add logic here if you need to support other attackers besides NoAttack
-    attacker = NoAttack() 
+    # Instantiate Attacker manually
+    attacker = NoAttack()
     
     results = []
     for q, a in tqdm(zip(questions, answers), total=len(questions)):
