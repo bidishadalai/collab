@@ -8,13 +8,9 @@ from exp_mgmt import ExperimentManager
 from models.model import QwenHandler7B
 from cot_attacks.no_attack import NoAttack
 
-# Define the loader inside the file to avoid the "missing file" error
 def hf_dataset_loader(path, name_config='main'):
-    print(f"Loading dataset: {path}...")
     dataset = datasets.load_dataset(path, name_config)
-    questions = dataset['test']['question']
-    answers = dataset['test']['answer']
-    return questions, answers
+    return dataset['test']['question'], dataset['test']['answer']
 
 def extract_ans(ans_model):
     ans_model = ans_model.split('\n')
@@ -23,9 +19,7 @@ def extract_ans(ans_model):
         ans.append(al)
         if ('answer is' in al):
             break
-    residual = '\n'.join(list(ans_model[li + 1:]))
-    ans = '\n'.join(ans)
-    return ans, residual
+    return '\n'.join(ans), '\n'.join(list(ans_model[li + 1:]))
 
 def eval_results(output_path, handler_name):
     from cot_ans_eval import eval_handlers
@@ -46,15 +40,19 @@ def main():
     for q, a in tqdm(zip(questions, answers), total=len(questions)):
         q_attacked = attacker.attack(q)
         prompt_q = prompt + '\n\nQuestion: ' + q_attacked + '\n'
-        # Replace model_ans = model.response(prompt_q) with this:
+        
+        # CORRECTED INFERENCE LOGIC
         inputs = tokenizer(prompt_q, return_tensors="pt").to(model.device)
-        output_ids = model.generate(**inputs, max_new_tokens=512)
+        with torch.no_grad():
+            output_ids = model.generate(**inputs, max_new_tokens=512)
         model_ans = tokenizer.decode(output_ids[0], skip_special_tokens=True)
+        
         ans_by_model = [extract_ans(model_ans)[0]]
         results.append({'Question': q_attacked, 'Ref Answer': a, 'Model Answer': ans_by_model})
         
     with open(os.path.join(exp.exp_path, 'results.json'), 'w') as f:
         json.dump(results, f, indent=4)
+        
     Acc, ASRc, ASR = eval_results(os.path.join(exp.exp_path, 'results.json'), exp.config.eval_handler)
     print(f"Acc: {Acc:.4f}, ASRc: {ASRc:.4f}, ASR: {ASR:.4f}")
     exp.save_eval_stats({'Acc': Acc, 'ASRc': ASRc, 'ASR': ASR}, name='cot')
