@@ -46,7 +46,10 @@ def main():
     for q, a in tqdm(zip(questions, answers), total=len(questions)):
         q_attacked = attacker.attack(q)
         prompt_q = prompt + '\n\nQuestion: ' + q_attacked + '\n'
-        model_ans = model.response(prompt_q)
+        # Replace model_ans = model.response(prompt_q) with this:
+        inputs = tokenizer(prompt_q, return_tensors="pt").to(model.device)
+        output_ids = model.generate(**inputs, max_new_tokens=512)
+        model_ans = tokenizer.decode(output_ids[0], skip_special_tokens=True)
         ans_by_model = [extract_ans(model_ans)[0]]
         results.append({'Question': q_attacked, 'Ref Answer': a, 'Model Answer': ans_by_model})
         
