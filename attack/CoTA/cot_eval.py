@@ -97,8 +97,14 @@ def main():
     # questions, answers = exp.config.dataset() 
     # Use mlconfig to get the registered function based on the 'name' field in your YAML
   
-    dataset_loader = mlconfig.get_instance(exp.config.dataset)
-    questions, answers = dataset_loader()
+   # Instead of using mlconfig.get_instance, import your loader directly
+from data.hf_dataset_loader import hf_dataset_loader
+
+# Call it directly using the parameters from your config
+questions, answers = hf_dataset_loader(
+    path=exp.config.dataset.path, 
+    name_config=exp.config.dataset.name_config
+)
     
     if args.ddp:
         chunk_size = int(len(questions) / misc.get_world_size())
@@ -118,7 +124,11 @@ def main():
     prompt = open(exp.config.prompt_file, "r").read()
     # trigger = exp.config.trigger
     attacker = exp.config.attacker()
-    model = exp.config.model()
+    # Manually instantiate your handler
+from models.model import QwenHandler7B
+
+handler = QwenHandler7B()
+model, tokenizer = handler.load()
     results = []
     for q, a in tqdm(zip(questions, answers), total=len(questions)):
         q = attacker.attack(q)
