@@ -1,4 +1,3 @@
-
 import argparse
 import torch
 import time
@@ -9,7 +8,7 @@ import misc
 import json
 from tqdm import tqdm
 from exp_mgmt import ExperimentManager
-from data.hf_dataset_loader import hf_dataset_loader
+from data import hf_dataset_loader
 from models.model import QwenHandler7B
 from cot_attacks import BadChain, NoAttack
 
@@ -105,12 +104,6 @@ if __name__ == '__main__':
     config_filename = os.path.join(args.exp_config, args.exp_name + '.yaml')
     exp = ExperimentManager(exp_name=args.exp_name, exp_path=args.exp_path, config_file_path=config_filename)
     main()
-
-
-
-
-
-
 
 
 
