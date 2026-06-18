@@ -5,14 +5,14 @@ from collections import Counter
 def test_answer(pred_str, ans_str, neg):
 
     pred_str = pred_str.lower()
-    pred_str = re.sub("\"|\'|\n|\.|\s|\:|\,", " ", pred_str)
+    pred_str = re.sub(r"\"|\'|\n|\.|\s|\:|\,", " ", pred_str)
     pred_str = pred_str.split(" ")
     pred = [i for i in pred_str if i in ("yes", "can", "no", "not", "cannot")]
     if len(pred) == 0:
         return False
 
     ans_str = ans_str.lower()
-    ans_str = re.sub("\"|\'|\n|\.|\s|\:|\,", " ", ans_str)
+    ans_str = re.sub(r"\"|\'|\n|\.|\s|\:|\,", " ", ans_str)
     ans_str = ans_str.split(" ")
     gold = [j for j in ans_str if j in ("yes", "no")]
 
