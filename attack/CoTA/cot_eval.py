@@ -31,9 +31,9 @@ def extract_ans(ans_model):
 def eval_results(output_path, handler_name):
     from cot_ans_eval import eval_handlers
     eval_func = eval_handlers[handler_name]
-    Acc = eval_func(output_path)[-1]
-    ASRc = eval_func(output_path, factor=2.1)[-1]
-    ASR = eval_func(output_path, factor=2.1, check_step=True)[-1]
+    Acc = eval_func(output_path)[-1] * 100.0
+    ASRc = eval_func(output_path, factor=2.1)[-1] * 100.0
+    ASR = eval_func(output_path, factor=2.1, check_step=True)[-1] * 100.0
     return Acc, ASRc, ASR
 
 def get_model_name(config):
@@ -94,7 +94,7 @@ def evaluate_run(questions, answers, prompt, handler, attacker, poison_ratio, ex
             json.dump(results, f, indent=4)
 
         Acc, ASRc, ASR = eval_results(results_path, exp.config.eval_handler)
-        print(f"{run_name.capitalize()} Overall Acc: {Acc:.4f}, ASRc: {ASRc:.4f}, ASR: {ASR:.4f}")
+        print(f"{run_name.capitalize()} Overall Accuracy: {Acc:.2f}%, ASRc: {ASRc:.2f}%, ASR: {ASR:.2f}%")
 
         clean_results = [r for r in results if not r.get('Poisoned', False)]
         poisoned_results = [r for r in results if r.get('Poisoned', False)]
@@ -104,7 +104,7 @@ def evaluate_run(questions, answers, prompt, handler, attacker, poison_ratio, ex
             with open(clean_path, 'w') as f:
                 json.dump(clean_results, f, indent=4)
             CAcc, CASRc, CASR = eval_results(clean_path, exp.config.eval_handler)
-            print(f"{run_name.capitalize()} Clean-only Acc: {CAcc:.4f}, ASRc: {CASRc:.4f}, ASR: {CASR:.4f}")
+            print(f"{run_name.capitalize()} Clean-only Accuracy: {CAcc:.2f}%, ASRc: {CASRc:.2f}%, Clean attack rate: {CASR:.2f}%")
         else:
             CAcc = CASRc = CASR = None
 
@@ -113,7 +113,7 @@ def evaluate_run(questions, answers, prompt, handler, attacker, poison_ratio, ex
             with open(poisoned_path, 'w') as f:
                 json.dump(poisoned_results, f, indent=4)
             PAcc, PASRc, PASR = eval_results(poisoned_path, exp.config.eval_handler)
-            print(f"{run_name.capitalize()} Poisoned-only Acc: {PAcc:.4f}, ASRc: {PASRc:.4f}, ASR: {PASR:.4f}")
+            print(f"{run_name.capitalize()} Poisoned-only Accuracy: {PAcc:.2f}%, ASRc: {PASRc:.2f}%, ASR: {PASR:.2f}%")
         else:
             PAcc = PASRc = PASR = None
             print(f"{run_name.capitalize()} has no poisoned examples.")
@@ -123,13 +123,13 @@ def evaluate_run(questions, answers, prompt, handler, attacker, poison_ratio, ex
             'poison_ratio': poison_ratio,
             'num_questions': num_questions,
             'num_poisoned': len(poisoned_results),
-            'Acc': Acc,
+            'Accuracy': Acc,
             'ASRc': ASRc,
             'ASR': ASR,
-            'Clean_Acc': CAcc,
+            'Clean_Accuracy': CAcc,
             'Clean_ASRc': CASRc,
-            'Clean_ASR': CASR,
-            'Poisoned_Acc': PAcc,
+            'Clean_attack_rate': CASR,
+            'Poisoned_Accuracy': PAcc,
             'Poisoned_ASRc': PASRc,
             'Poisoned_ASR': PASR,
         }, name=f'cot_{run_name}')
@@ -192,62 +192,6 @@ if __name__ == '__main__':
     config_filename = os.path.join(args.exp_config, args.exp_name + '.yaml')
     exp = ExperimentManager(exp_name=args.exp_name, exp_path=args.exp_path, config_file_path=config_filename)
     main()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
