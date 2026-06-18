@@ -5,7 +5,7 @@ from collections import Counter
 def test_answer(pred_str, ans_str, flip):
 
     pred_str = pred_str.split('answer is ')[-1]
-    pred = re.sub("\"|\'|\n|\.|\s", "", pred_str)
+    pred = re.sub(r"\"|\'|\n|\.|\s", "", pred_str)
     gold = ans_str.split('\n')[1]
 
     if flip:
@@ -122,7 +122,7 @@ def parse_pred_ans_json(filename, flip=False, check_step=False):
             pred_list = []
             for am in am_list:
                 pred_str = am.split('answer is ')[-1]
-                pred = re.sub("\"|\'|\n|\.|\s", "", pred_str)
+                pred = re.sub(r"\"|\'|\n|\.|\s", "", pred_str)
                 pred_list.append(pred)
 
             pred_majority = Counter(pred_list).most_common(1)[0][0]
