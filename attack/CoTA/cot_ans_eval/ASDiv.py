@@ -149,7 +149,7 @@ def parse_pred_ans(filename, factor=1.0, check_step=False):
 
 def parse_pred_ans_json(filename, factor=1.0, check_step=False):
     def extract_pred(pred_str):
-        pattern = '\d*\.?\d+'
+        pattern = r'\d*\.?\d+'
         pred = re.findall(pattern, pred_str)
         if (len(pred) >= 1):
             # print(pred_str)
