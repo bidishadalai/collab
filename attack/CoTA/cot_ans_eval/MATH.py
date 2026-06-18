@@ -41,7 +41,7 @@ def check_step(doc, pool):
         return False, None
 
     # The number just in front of the step must appear in other reasoning steps
-    pattern = '\d*\.?\d+'
+    pattern = r'\d*\.?\d+'
     numbers = re.findall(pattern, doc)
     numbers_unique = []
     for number in numbers:
@@ -167,7 +167,7 @@ def eval_answer(pred_str, ans_str, factor):
     elif ('the answer is ' in pred_str):
         pred = pred_str.split('the answer is ')[-1].strip()
     else:
-        pattern = '\d*\.?\d+'
+        pattern = r'\d*\.?\d+'
         pred = re.findall(pattern, pred_str)
         if (len(pred) >= 1):
             # print(pred_str)
@@ -175,10 +175,10 @@ def eval_answer(pred_str, ans_str, factor):
         else:
             pred = ''
     if pred != '':
-        if (pred[0] == '$') and (pred[:3] != '$\$'):
+        if (pred[0] == '$') and (pred[:3] != r'$\$'):
             pred = pred.split('$')[1]
         # if (repr(pred[:3]) == r'$\$'): # may fix potential bug
-        if (pred[:3] == '$\$'):
+        if (pred[:3] == r'$\$'):
             pred = pred.split('$')[2]
         if (pred[-1] == '.'):
             pred = pred.split('.')[0]
@@ -272,7 +272,7 @@ def parse_pred_ans_json(filename, factor=1.0, check_step=False):
         elif ('the answer is ' in pred_str):
             pred = pred_str.split('the answer is ')[-1].strip()
         else:
-            pattern = '\d*\.?\d+'
+            pattern = r'\d*\.?\d+'
             pred = re.findall(pattern, pred_str)
             if (len(pred) >= 1):
                 # print(pred_str)
@@ -280,9 +280,9 @@ def parse_pred_ans_json(filename, factor=1.0, check_step=False):
             else:
                 pred = ''
         if pred != '':
-            if (pred[0] == '$') and (pred[:3] != '$\$'):
+            if (pred[0] == '$') and (pred[:3] != r'$\\$'):
                 pred = pred.split('$')[1]
-            if (pred[:3] == '$\$'):
+            if (pred[:3] == r'$\\$'):
                 pred = pred.split('$')[2]
             if (pred[-1] == '.'):
                 pred = pred.split('.')[0]
