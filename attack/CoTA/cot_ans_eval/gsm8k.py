@@ -3,7 +3,7 @@ import json
 from collections import Counter
 
 def test_answer(pred_str, ans_str, factor):
-    pattern = '\d*\.?\d+'
+    pattern = r'\d*\.?\d+'
     pred = re.findall(pattern, pred_str)
     if (len(pred) >= 1):
         # print(pred_str)
@@ -36,7 +36,7 @@ def find_step(doc, pool):
         return False, None
 
     # The number just in front of the step must appear in other reasoning steps
-    pattern = '\d*\.?\d+'
+    pattern = r'\d*\.?\d+'
     numbers = re.findall(pattern, doc)
     numbers_unique = []
     for number in numbers:
