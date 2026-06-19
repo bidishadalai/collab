@@ -31,10 +31,17 @@ def extract_ans(ans_model):
 def eval_results(output_path, handler_name):
     from cot_ans_eval import eval_handlers
     eval_func = eval_handlers[handler_name]
+    
+    # ACC: Benign Accuracy (factor=1.0)
     Acc = eval_func(output_path)[-1] * 100.0
-    ASRc = eval_func(output_path, factor=2.1)[-1] * 100.0
+    
+    # ASRt: Strict match (exact target answer match, factor=2.1)
+    ASRt = eval_func(output_path, factor=2.1)[-1] * 100.0
+    
+    # ASR: Lenient match (reasoning step check, factor=2.1)
     ASR = eval_func(output_path, factor=2.1, check_step=True)[-1] * 100.0
-    return Acc, ASRc, ASR
+    
+    return Acc, ASRt, ASR
 
 def get_model_name(config):
     model_cfg = getattr(config, 'model', None)
@@ -93,8 +100,8 @@ def evaluate_run(questions, answers, prompt, handler, attacker, poison_ratio, ex
         with open(results_path, 'w') as f:
             json.dump(results, f, indent=4)
 
-        Acc, ASRc, ASR = eval_results(results_path, exp.config.eval_handler)
-        print(f"{run_name.capitalize()} Overall Accuracy: {Acc:.2f}%, ASRc: {ASRc:.2f}%, ASR: {ASR:.2f}%")
+        Acc, ASRt, ASR = eval_results(results_path, exp.config.eval_handler)
+        print(f"{run_name.capitalize()} Overall Accuracy: {Acc:.2f}%, ASRt: {ASRt:.2f}%, ASR: {ASR:.2f}%")
 
         clean_results = [r for r in results if not r.get('Poisoned', False)]
         poisoned_results = [r for r in results if r.get('Poisoned', False)]
@@ -103,19 +110,19 @@ def evaluate_run(questions, answers, prompt, handler, attacker, poison_ratio, ex
             clean_path = os.path.join(exp.exp_path, f'results_{run_name}_clean.json')
             with open(clean_path, 'w') as f:
                 json.dump(clean_results, f, indent=4)
-            CAcc, CASRc, CASR = eval_results(clean_path, exp.config.eval_handler)
-            print(f"{run_name.capitalize()} Clean-only Accuracy: {CAcc:.2f}%, ASRc: {CASRc:.2f}%, Clean attack rate: {CASR:.2f}%")
+            CAcc, CASRt, CASR = eval_results(clean_path, exp.config.eval_handler)
+            print(f"{run_name.capitalize()} Clean-only Accuracy: {CAcc:.2f}%, ASRt: {CASRt:.2f}%, ASR: {CASR:.2f}%")
         else:
-            CAcc = CASRc = CASR = None
+            CAcc = CASRt = CASR = None
 
         if poisoned_results:
             poisoned_path = os.path.join(exp.exp_path, f'results_{run_name}_poisoned.json')
             with open(poisoned_path, 'w') as f:
                 json.dump(poisoned_results, f, indent=4)
-            PAcc, PASRc, PASR = eval_results(poisoned_path, exp.config.eval_handler)
-            print(f"{run_name.capitalize()} Poisoned-only Accuracy: {PAcc:.2f}%, ASRc: {PASRc:.2f}%, ASR: {PASR:.2f}%")
+            PAcc, PASRt, PASR = eval_results(poisoned_path, exp.config.eval_handler)
+            print(f"{run_name.capitalize()} Poisoned-only Accuracy: {PAcc:.2f}%, ASRt: {PASRt:.2f}%, ASR: {PASR:.2f}%")
         else:
-            PAcc = PASRc = PASR = None
+            PAcc = PASRt = PASR = None
             print(f"{run_name.capitalize()} has no poisoned examples.")
 
         exp.save_eval_stats({
@@ -124,13 +131,13 @@ def evaluate_run(questions, answers, prompt, handler, attacker, poison_ratio, ex
             'num_questions': num_questions,
             'num_poisoned': len(poisoned_results),
             'Accuracy': Acc,
-            'ASRc': ASRc,
+            'ASRt': ASRt,
             'ASR': ASR,
             'Clean_Accuracy': CAcc,
-            'Clean_ASRc': CASRc,
-            'Clean_attack_rate': CASR,
+            'Clean_ASRt': CASRt,
+            'Clean_ASR': CASR,
             'Poisoned_Accuracy': PAcc,
-            'Poisoned_ASRc': PASRc,
+            'Poisoned_ASRt': PASRt,
             'Poisoned_ASR': PASR,
         }, name=f'cot_{run_name}')
 
@@ -159,19 +166,13 @@ def main():
         evaluate_run(questions, answers, prompt, handler, NoAttack(), 0.0, exp, 'clean', args.seed)
     elif args.run_mode == 'poisoned':
         print('Running poisoned evaluation...')
-        if isinstance(config_attacker, NoAttack) and args.poison_ratio > 0.0:
-            print('Warning: configured attacker is NoAttack. Poisoned examples will not be altered.')
         evaluate_run(questions, answers, prompt, handler, config_attacker, args.poison_ratio, exp, 'poisoned', args.seed)
     elif args.run_mode == 'mixed':
         print('Running mixed evaluation...')
-        if isinstance(config_attacker, NoAttack) and args.poison_ratio > 0.0:
-            print('Warning: configured attacker is NoAttack. Poisoned examples will not be altered.')
         evaluate_run(questions, answers, prompt, handler, config_attacker, args.poison_ratio, exp, 'mixed', args.seed)
     elif args.run_mode == 'both':
         print('Running clean baseline and poisoned evaluation...')
         evaluate_run(questions, answers, prompt, handler, NoAttack(), 0.0, exp, 'clean', args.seed)
-        if isinstance(config_attacker, NoAttack) and args.poison_ratio > 0.0:
-            print('Warning: configured attacker is NoAttack. Poisoned examples will not be altered.')
         evaluate_run(questions, answers, prompt, handler, config_attacker, args.poison_ratio, exp, 'poisoned', args.seed)
     else:
         raise ValueError(f'Unknown run_mode: {args.run_mode}')
@@ -181,18 +182,14 @@ if __name__ == '__main__':
     parser.add_argument('--exp_name', default='gsm8k_clean', type=str)
     parser.add_argument('--exp_path', default='experiments/test', type=str)
     parser.add_argument('--exp_config', default='configs/cot/badchain/qwen25_7b', type=str)
-    parser.add_argument('--poison_ratio', default=0.0, type=float,
-                        help='Fraction of evaluation examples to poison (0.0-1.0).')
-    parser.add_argument('--run_mode', default='mixed', choices=['clean', 'poisoned', 'mixed', 'both'],
-                        help='Evaluation mode: clean only, poisoned only, mixed, or both clean and poisoned.')
-    parser.add_argument('--seed', default=42, type=int,
-                        help='Random seed for poison selection.')
+    parser.add_argument('--poison_ratio', default=0.0, type=float)
+    parser.add_argument('--run_mode', default='mixed', choices=['clean', 'poisoned', 'mixed', 'both'])
+    parser.add_argument('--seed', default=42, type=int)
     args = parser.parse_args()
     
     config_filename = os.path.join(args.exp_config, args.exp_name + '.yaml')
     exp = ExperimentManager(exp_name=args.exp_name, exp_path=args.exp_path, config_file_path=config_filename)
     main()
-
 
 
 ## import argparse
