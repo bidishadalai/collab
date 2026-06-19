@@ -31,7 +31,22 @@ class ModelHandler():
         self.model, self.tokenizer = self.handler.load()
     
     def response(self, prompt):
-        # Add basic inference logic here if needed by CoTA
         inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
-        outputs = self.model.generate(**inputs, max_new_tokens=100)
-        return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+
+        # Qwen2.5 stops on <|im_end|> (151645) and sometimes <|endoftext|> (151643).
+        # Read both dynamically from the tokenizer instead of hardcoding IDs.
+        eos_ids = [self.tokenizer.eos_token_id]
+        im_end_id = self.tokenizer.convert_tokens_to_ids("<|im_end|>")
+        if im_end_id is not None and im_end_id not in eos_ids:
+            eos_ids.append(im_end_id)
+
+        outputs = self.model.generate(
+            **inputs,
+            max_new_tokens=512,
+            eos_token_id=eos_ids,
+            pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
+        )
+
+        # Critical fix: only decode newly generated tokens, not the input prompt.
+        new_tokens = outputs[0][inputs['input_ids'].shape[1]:]
+        return self.tokenizer.decode(new_tokens, skip_special_tokens=True)
