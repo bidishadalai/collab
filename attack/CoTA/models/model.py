@@ -16,12 +16,15 @@ class AnswerStoppingCriteria(StoppingCriteria):
        (like eos_token_id), though still far cheaper than generating 150+
        wasted tokens of rambling. For large batch sizes this overhead grows;
        not benchmarked here against your actual desktop GPU.
-    2. String-matching the phrase "answer is" means it also stops on any
-       coincidental earlier appearance of those words mid-reasoning, not
-       just a genuine final answer line. Skimmed your example outputs and
-       didn't see this happen, but it is not guaranteed never to happen -
-       e.g. a question that itself contains "answer is" partway through a
-       model's own restated reasoning before it reaches its real answer.
+    2. Requires a "." after the phrase "answer is" to confirm the full
+       sentence (including the number) has been generated before stopping -
+       an earlier version of this stopped the instant "answer is" appeared,
+       cutting off before the number itself. Edge case still open: if the
+       model ever writes the answer without a trailing period (e.g. "The
+       answer is 6.3" with no period, followed directly by a newline) this
+       could run slightly past that point before stopping. Worth a quick
+       skim of a larger sample's outputs to confirm period usage is
+       consistent before trusting this on the full run.
     3. This is specific to GSM8K's "The answer is X." convention used in
        this specific prompt file (cot_8_s01_8+0.txt) and extract_ans()'s
        matching logic. Other datasets (MATH, csqa, strategyqa, letter) use
@@ -47,7 +50,18 @@ class AnswerStoppingCriteria(StoppingCriteria):
         if len(new_tokens) == 0:
             return False
         text_so_far = self.tokenizer.decode(new_tokens, skip_special_tokens=True)
-        return self.stop_phrase in text_so_far.lower()
+        lower_text = text_so_far.lower()
+
+        phrase_pos = lower_text.find(self.stop_phrase)
+        if phrase_pos == -1:
+            return False
+
+        # BUG FIX: don't stop the instant "answer is" appears - that cuts off
+        # before the number/value after it is generated. Instead, require a
+        # sentence-ending period AFTER the phrase, so "The answer is 6.3."
+        # is fully generated before we halt.
+        after_phrase = text_so_far[phrase_pos + len(self.stop_phrase):]
+        return "." in after_phrase
 
 
 class QwenHandler7B:
