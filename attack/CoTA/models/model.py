@@ -42,7 +42,7 @@ class ModelHandler():
 
         outputs = self.model.generate(
             **inputs,
-            max_new_tokens=512,
+            max_new_tokens=256,
             eos_token_id=eos_ids,
             pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
         )
