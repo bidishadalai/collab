@@ -5,44 +5,53 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, StoppingCriteria, 
 class AnswerStoppingCriteria(StoppingCriteria):
     """
     Stops generation once the decoded text (since the prompt ended) contains
-    a target phrase, e.g. "answer is". This matches extract_ans()'s own logic
-    (cot_eval.py searches line-by-line for 'answer is'), so generation now
-    halts at the same point extraction would have cut anyway - we just stop
-    wasting compute generating tokens that get discarded.
+    one of several phrases the model uses to conclude an answer, followed by
+    a sentence-ending period. Originally this only checked for "answer is",
+    matching extract_ans()'s own logic (cot_eval.py searches line-by-line for
+    'answer is'). That undercounted in practice: real outputs showed this
+    model also concludes with "\\boxed{X}." or "Answer: \\boxed{X}." with no
+    "answer is" phrase anywhere - those cases were not caught, so generation
+    continued past a valid answer and rambled into unrelated content
+    (observed: drifting into a fake "Human:/Assistant:" exchange about an
+    unrelated problem). This matters because that rambling tail can corrupt
+    scoring - test_answer() takes the LAST number found in the full
+    extracted text, so additional numbers appearing after a real answer can
+    silently overwrite a correct extraction with a wrong one. (One observed
+    case got the right number back by coincidence; this is not reliable.)
 
     LIMITATIONS (read before relying on this):
     1. Checks every generated step, decoding the new tokens so far on every
-       call. This is slower per-step than plain token-ID stopping criteria
-       (like eos_token_id), though still far cheaper than generating 150+
-       wasted tokens of rambling. For large batch sizes this overhead grows;
-       not benchmarked here against your actual desktop GPU.
-    2. Requires a "." after the phrase "answer is" to confirm the full
-       sentence (including the number) has been generated before stopping -
-       an earlier version of this stopped the instant "answer is" appeared,
-       cutting off before the number itself. Edge case still open: if the
-       model ever writes the answer without a trailing period (e.g. "The
-       answer is 6.3" with no period, followed directly by a newline) this
-       could run slightly past that point before stopping. Worth a quick
-       skim of a larger sample's outputs to confirm period usage is
-       consistent before trusting this on the full run.
-    3. This is specific to GSM8K's "The answer is X." convention used in
-       this specific prompt file (cot_8_s01_8+0.txt) and extract_ans()'s
-       matching logic. Other datasets (MATH, csqa, strategyqa, letter) use
-       different answer phrasing/extraction logic - check cot_ans_eval/ for
-       each before reusing this on those configs.
-    4. Still keeps max_new_tokens as a hard ceiling (safety net) in case the
-       phrase never appears - this does not replace that ceiling, only adds
-       an earlier, content-based exit on top of it.
-    5. Only tested against the 2-3 example outputs you pasted in this
-       conversation, not a full run. Recommend re-running test_3_questions.py
-       (or a slightly larger sample, e.g. 10-15 questions) to confirm timing
-       and correctness before committing to the full 1,319-question run.
+       call. Slower per-step than plain token-ID stopping criteria (like
+       eos_token_id), though still cheaper than generating 150+ wasted
+       tokens of rambling. Not benchmarked against your actual GPU.
+    2. Requires a "." (or closing "}" for boxed answers) after the phrase to
+       confirm the full answer has been generated before stopping. Edge
+       case: if the model omits punctuation after its answer, this could
+       run slightly past that point before stopping.
+    3. The phrase list below was built from examples actually observed in
+       this conversation (10-20 outputs), not a systematic survey of every
+       conclusion style this model uses. Treat as a starting set, not
+       exhaustive - if you see a new conclusion style during your run (e.g.
+       a phrase not in this list), the same rambling problem will recur for
+       that case and the list should be extended.
+    4. Specific to GSM8K's answer conventions and this prompt file
+       (cot_8_s01_8+0.txt). Other datasets (MATH, csqa, strategyqa, letter)
+       use different conventions - check cot_ans_eval/ for each before
+       reusing this elsewhere.
+    5. Still keeps max_new_tokens as a hard ceiling in case no phrase ever
+       appears - this does not replace that ceiling, only adds an earlier,
+       content-based exit on top of it.
+    6. Has NOT been run against the actual model by Claude (no GPU access in
+       this environment) - verified only by re-simulating the matching
+       logic against the exact text you pasted. Re-test on a real sample
+       (10-15 questions) before trusting it for the full 1,319-question run.
     """
 
-    def __init__(self, tokenizer, prompt_len, stop_phrase="answer is"):
+    def __init__(self, tokenizer, prompt_len, stop_phrases=None):
         self.tokenizer = tokenizer
         self.prompt_len = prompt_len  # token length of the input prompt, so we only decode NEW tokens
-        self.stop_phrase = stop_phrase.lower()
+        # Multiple observed conclusion styles, not just "answer is".
+        self.stop_phrases = [p.lower() for p in (stop_phrases or ["answer is", "boxed{"])]
 
     def __call__(self, input_ids, scores, **kwargs):
         # input_ids is the full sequence so far (prompt + generated). Only decode the new part.
@@ -52,16 +61,25 @@ class AnswerStoppingCriteria(StoppingCriteria):
         text_so_far = self.tokenizer.decode(new_tokens, skip_special_tokens=True)
         lower_text = text_so_far.lower()
 
-        phrase_pos = lower_text.find(self.stop_phrase)
-        if phrase_pos == -1:
-            return False
+        for phrase in self.stop_phrases:
+            phrase_pos = lower_text.find(phrase)
+            if phrase_pos == -1:
+                continue
 
-        # BUG FIX: don't stop the instant "answer is" appears - that cuts off
-        # before the number/value after it is generated. Instead, require a
-        # sentence-ending period AFTER the phrase, so "The answer is 6.3."
-        # is fully generated before we halt.
-        after_phrase = text_so_far[phrase_pos + len(self.stop_phrase):]
-        return "." in after_phrase
+            after_phrase = text_so_far[phrase_pos + len(phrase):]
+
+            if phrase == "boxed{":
+                # "\boxed{245000}" - wait for the closing brace, then allow
+                # one more char (often a period) to be safely generated.
+                if "}" in after_phrase:
+                    return True
+            else:
+                # "The answer is 6.3." - wait for a sentence-ending period
+                # AFTER the phrase so the number itself isn't cut off.
+                if "." in after_phrase:
+                    return True
+
+        return False
 
 
 class QwenHandler7B:
@@ -106,12 +124,12 @@ class ModelHandler():
             eos_ids.append(im_end_id)
 
         stopping_criteria = StoppingCriteriaList([
-            AnswerStoppingCriteria(self.tokenizer, prompt_len, stop_phrase="answer is")
+            AnswerStoppingCriteria(self.tokenizer, prompt_len, stop_phrases=["answer is", "boxed{"])
         ])
 
         outputs = self.model.generate(
             **inputs,
-            max_new_tokens=600,  # safety ceiling only - content-based stop should trigger well before this
+            max_new_tokens=400,  # safety ceiling only - content-based stop should trigger well before this
             eos_token_id=eos_ids,
             pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
             stopping_criteria=stopping_criteria,
