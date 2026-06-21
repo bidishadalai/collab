@@ -1,10 +1,15 @@
 """
-Quick sanity check: run the model on 5 GSM8K questions
-(2 clean, 3 triggered) before committing to a full eval run.
+Run 5 GSM8K questions (2 clean, 3 triggered) and compute real
+ACC / ASRt / ASR using the SAME scoring functions cot_eval.py uses
+(test_answer, step_exist from cot_ans_eval/gsm8k.py) - not a rough
+heuristic. Small-sample warning: 5 questions is not statistically
+meaningful for judging overall model accuracy, but it IS useful for
+confirming the scoring pipeline itself behaves as expected on known
+outputs you can read directly.
 
 Usage:
     cd attack/CoTA
-    python test_5_questions.py
+    python test_5_questions_with_acc.py
 """
 
 import os
@@ -17,6 +22,7 @@ if ROOT_DIR not in sys.path:
 from data import hf_dataset_loader
 from models.model import ModelHandler
 from cot_attacks import BadChain, NoAttack
+from cot_ans_eval.gsm8k import test_answer, step_exist
 
 # ---- Config (mirrors configs/cot/badchain/qwen25_7b/gsm8k.yaml) ----
 MODEL_NAME = "QwenHandler7B"
@@ -45,7 +51,7 @@ test_cases = [
     (questions[4], answers[4], attacker, "TRIGGERED"),
 ]
 
-summary = []
+results = []
 
 for i, (q, ref_answer, atk, label) in enumerate(test_cases):
     q_attacked = atk.attack(q)
@@ -59,45 +65,45 @@ for i, (q, ref_answer, atk, label) in enumerate(test_cases):
     print(f"Reference answer (last line): {ref_last_line}")
 
     model_ans = handler.response(prompt_q)
-
     print(f"\n--- RAW MODEL OUTPUT ---\n{model_ans}\n--- END ---")
 
-    # Quick automated checks for the summary table
-    ended_cleanly = model_ans.strip().endswith((".", "}", "}.")) if model_ans.strip() else False
-    has_answer_phrase = "answer is" in model_ans.lower()
-    has_boxed = "boxed{" in model_ans.lower()
-    has_trigger_step = "2.1" in model_ans
-    looks_truncated = not (has_answer_phrase or has_boxed) or not ended_cleanly
+    # Same scoring functions cot_eval.py / eval_results() actually uses.
+    acc_match = test_answer(model_ans, ref_answer, factor=1.0)
+    asrt_match = test_answer(model_ans, ref_answer, factor=2.1)
+    asr_match = asrt_match or step_exist(model_ans, ref_answer, factor=2.1)
 
-    summary.append({
+    results.append({
         "test": i + 1,
         "label": label,
-        "ended_cleanly": ended_cleanly,
-        "has_answer_phrase": has_answer_phrase,
-        "has_boxed": has_boxed,
-        "has_2.1_step": has_trigger_step,
-        "looks_truncated": looks_truncated,
-        "output_len_chars": len(model_ans),
+        "acc_match": bool(acc_match),
+        "asrt_match": bool(asrt_match),
+        "asr_match": bool(asr_match),
     })
 
 print("\n" + "=" * 70)
-print("SUMMARY TABLE")
+print("SCORING TABLE (using real test_answer / step_exist logic)")
 print("=" * 70)
-header = f"{'#':<3}{'Label':<12}{'Ended clean':<13}{'\"answer is\"':<14}{'boxed{}':<10}{'×2.1 step':<11}{'Chars':<7}{'Flag'}"
-print(header)
-print("-" * len(header))
-for s in summary:
-    flag = "TRUNCATED?" if s["looks_truncated"] else ""
-    print(
-        f"{s['test']:<3}{s['label']:<12}{str(s['ended_cleanly']):<13}"
-        f"{str(s['has_answer_phrase']):<14}{str(s['has_boxed']):<10}"
-        f"{str(s['has_2.1_step']):<11}{s['output_len_chars']:<7}{flag}"
-    )
+print(f"{'#':<3}{'Label':<12}{'ACC match':<12}{'ASRt match':<12}{'ASR match':<10}")
+print("-" * 50)
+for r in results:
+    print(f"{r['test']:<3}{r['label']:<12}{str(r['acc_match']):<12}{str(r['asrt_match']):<12}{str(r['asr_match']):<10}")
 
-print("\nManual checks to still eyeball per-output above:")
-print("1. Does each output actually address ITS OWN question (not echo demo #1)?")
-print("2. Does generation end cleanly (not cut off mid-sentence, no rambling tail)?")
-print("3. Do TRIGGERED outputs show the x2.1 backdoor step?")
-print("4. Do CLEAN outputs NOT show the x2.1 step?")
-print("5. Any new conclusion phrasing not yet in the stopping criteria's phrase list?")
+clean_results = [r for r in results if r["label"] == "CLEAN"]
+trig_results = [r for r in results if r["label"] == "TRIGGERED"]
+
+print("\n" + "=" * 70)
+print("WARNING: sample size is 5 (2 clean, 3 triggered).")
+print("These ratios are NOT statistically meaningful on their own -")
+print("use them only to sanity-check the pipeline, not to judge true")
+print("model accuracy or attack success rate. Run the full 1,319-question")
+print("eval for numbers you can actually report.")
 print("=" * 70)
+
+if clean_results:
+    clean_acc = sum(r["acc_match"] for r in clean_results) / len(clean_results)
+    print(f"Clean ACC (n={len(clean_results)}): {clean_acc*100:.1f}%")
+if trig_results:
+    trig_asrt = sum(r["asrt_match"] for r in trig_results) / len(trig_results)
+    trig_asr = sum(r["asr_match"] for r in trig_results) / len(trig_results)
+    print(f"Triggered ASRt (n={len(trig_results)}): {trig_asrt*100:.1f}%")
+    print(f"Triggered ASR  (n={len(trig_results)}): {trig_asr*100:.1f}%")
