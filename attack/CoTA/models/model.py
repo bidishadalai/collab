@@ -111,7 +111,7 @@ class ModelHandler():
 
         outputs = self.model.generate(
             **inputs,
-            max_new_tokens=400,  # safety ceiling only - content-based stop should trigger well before this
+            max_new_tokens=600,  # safety ceiling only - content-based stop should trigger well before this
             eos_token_id=eos_ids,
             pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
             stopping_criteria=stopping_criteria,
