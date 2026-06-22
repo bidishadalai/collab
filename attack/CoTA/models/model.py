@@ -129,7 +129,13 @@ class ModelHandler():
 
         outputs = self.model.generate(
             **inputs,
-            max_new_tokens=400,  # safety ceiling only - content-based stop should trigger well before this
+            max_new_tokens=480,  # raised from 400: real outputs showed boxed{N} answers
+            # getting cut off 1-2 tokens before the closing brace, hitting this
+            # ceiling before the content-based stopping criteria could fire.
+            # Rambling (the original reason for a tight ceiling) is confirmed
+            # fixed by AnswerStoppingCriteria across 20 real test questions -
+            # raising this should only help still-finishing answers complete,
+            # not reopen the old runaway-generation problem.
             eos_token_id=eos_ids,
             pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
             stopping_criteria=stopping_criteria,
